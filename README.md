@@ -46,7 +46,7 @@ IEICE Technical Report, 2014) and "Perl meets GPU" (Perl Advent Calendar 2013).
 
 ```
 kernel (Perl) --parse--> AST --> C --clang (NVPTX)--> PTX --CUDA::DriverAPI--> GPU
-              \--------- wrapped in thread loops ---------> perl interpreter
+                          \----> Perl (thread loops, GPU semantics) --> perl interpreter
 ```
 
 - The kernel body runs once per thread. `$x`, `$y`, `$z` are the thread
@@ -59,6 +59,10 @@ kernel (Perl) --parse--> AST --> C --clang (NVPTX)--> PTX --CUDA::DriverAPI--> G
   them in place.
 - With `engine => 'perl'` (or automatically when no GPU or clang is found) the
   kernel runs in the perl interpreter, so scripts can be developed without a GPU.
+  The perl engine follows the GPU semantics (0/1 comparisons, 32-bit bit
+  operations, truncation into int arrays, only `retval` arrays change).
+- The GPU computes in `float` by default; `precision => 'double'` makes it
+  match the perl engine (slower on most GPUs).
 - Compiled PTX is cached in `~/.cache/percuda` (`PERCUDA_CACHE_DIR`).
 
 See `perldoc PerCUDA` for the supported kernel syntax and the differences

@@ -26,7 +26,7 @@ K
         name => 'bit operations and shifts',
         argument => [ in => 'i', out => 'i' ],
         source => <<'K',
-my $v = $in->[$x] + 60;    # bit operations on negative numbers differ (perl uses unsigned 64-bit)
+my $v = $in->[$x] + 20;
 $out->[$x] = (($v & 5) | ($v ^ 3)) + ($v << 2) + ($v >> 1) + (~$v & 255);
 K
     },

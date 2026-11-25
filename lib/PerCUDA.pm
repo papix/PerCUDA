@@ -17,8 +17,12 @@ sub new ($class, %args) {
         unless ref $pairs eq 'ARRAY' && @$pairs % 2 == 0;
     my @arguments = map { [ $pairs->[ $_ * 2 ], $pairs->[ $_ * 2 + 1 ] ] } 0 .. @$pairs / 2 - 1;
 
+    my $precision = $args{precision} // 'single';
+    Carp::croak("PerCUDA: precision must be 'single' or 'double'") unless $precision =~ /\A(?:single|double)\z/;
+
     my $ast = PerCUDA::Parser->new(source => $source)->parse;
-    my $gen = PerCUDA::CodeGen->new(ast => $ast, dim => $dim, arguments => \@arguments)->generate;
+    my $gen = PerCUDA::CodeGen->new(ast => $ast, dim => $dim, arguments => \@arguments, precision => $precision)
+        ->generate;
     my %arg = map { $_->{name} => $_ } @{ $gen->{args} };
 
     my $retval = $args{retval} // [];
@@ -35,11 +39,12 @@ sub new ($class, %args) {
     Carp::croak("PerCUDA: size '$size' must be an array") if $arg{$size}{kind} eq 'scalar';
 
     my $self = bless {
-        dim       => $dim,
-        size      => $size,
-        retval    => $retval,
-        arguments => \@arguments,
-        c_source  => $gen->{c},
+        dim         => $dim,
+        size        => $size,
+        retval      => $retval,
+        arguments   => \@arguments,
+        c_source    => $gen->{c},
+        perl_source => $gen->{perl},
     }, $class;
 
     my $engine = $args{engine};
@@ -70,19 +75,20 @@ sub new ($class, %args) {
     }
     else {
         $self->{engine} = PerCUDA::Engine::Perl->new(
-            dim       => $dim,
-            size      => $size,
-            retval    => $retval,
-            arguments => \@arguments,
-            source    => $source,
+            dim    => $dim,
+            size   => $size,
+            retval => $retval,
+            args   => $gen->{args},
+            perl   => $gen->{perl},
         );
     }
     return $self;
 }
 
-sub engine   ($self) { $self->{engine}->name }
-sub c_source ($self) { $self->{c_source} }
-sub ptx_path ($self) { $self->{ptx} }
+sub engine      ($self) { $self->{engine}->name }
+sub c_source    ($self) { $self->{c_source} }
+sub perl_source ($self) { $self->{perl_source} }
+sub ptx_path    ($self) { $self->{ptx} }
 
 sub run ($self, @values) {
     my $want = @{ $self->{arguments} };
@@ -169,6 +175,10 @@ first array argument).
 =item C<engine>: C<gpu> or C<perl>. When omitted, the GPU is used if clang and
 a CUDA device are available.
 
+=item C<precision>: C<single> (default) or C<double>. The type of float
+literals and of locals inferred as floating point. C<double> is slower on
+most GPUs but matches the perl engine.
+
 =item C<arch>, C<clang>, C<cache_dir>, C<device>: PTX target (default
 C<sm_75>, or C<$ENV{PERCUDA_ARCH}>), clang command (C<$ENV{PERCUDA_CLANG}>),
 PTX cache directory (C<$ENV{PERCUDA_CACHE_DIR}>, default
@@ -184,9 +194,10 @@ the C<size> argument and is filled with zeros. Returns the C<retval> arrays
 (the first one in scalar context). The caller's retval arrays are also updated
 in place.
 
-=item C<< $runner->engine >>, C<< $runner->c_source >>, C<< $runner->ptx_path >>
+=item C<< $runner->engine >>, C<< $runner->c_source >>, C<< $runner->perl_source >>, C<< $runner->ptx_path >>
 
-The engine in use, the generated C code and the path of the compiled PTX.
+The engine in use, the generated C and Perl code, and the path of the
+compiled PTX.
 
 =back
 
@@ -216,12 +227,39 @@ Perl.
 
 =head1 DIFFERENCES BETWEEN ENGINES
 
-The GPU computes with 32-bit C<int> and C<float> (unless C<d> is used) while
-perl uses 64-bit integers and doubles, so results may differ slightly. Values
-stored into an C<i> array are truncated on the GPU only. Out of range or
-negative array indices are not checked on the GPU. Only C<retval> arrays are
-copied back from the GPU, whereas the perl engine modifies the arrays passed
-to C<run> directly.
+The perl engine runs Perl code generated from the same kernel and follows the
+GPU semantics where Perl would differ:
+
+=over 4
+
+=item * Comparisons and C<!> yield 0 or 1.
+
+=item * Bit operations work on 32-bit signed integers.
+
+=item * Values stored into C<i> arrays and C<i> scalar arguments are truncated.
+
+=item * Empty arrays are filled with zeros, and only C<retval> arrays are
+changed for the caller (arrays written by the kernel are copied first).
+
+=back
+
+Remaining differences:
+
+=over 4
+
+=item * Floating point: the GPU uses C<float> unless C<precision =E<gt> 'double'>
+or C<d> data is used, while perl always uses doubles. With
+C<precision =E<gt> 'double'> the results normally match exactly.
+
+=item * Integers are 32 bits on the GPU and 64 bits in perl, so overflow
+differs.
+
+=item * Out of range or negative array indices are not checked on the GPU.
+
+=item * The perl engine dies on division or modulus by zero, which helps
+debugging; the GPU yields inf, nan or 0.
+
+=back
 
 =head1 DEPENDENCIES
 

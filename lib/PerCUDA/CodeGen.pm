@@ -25,6 +25,7 @@ sub new ($class, %args) {
         arguments => $args{arguments},    # [ [ name, type ], ... ]
         symbols   => [],
         next_id   => 0,
+        real      => ($args{precision} // 'single') eq 'double' ? 'd' : 'f',
     }, $class;
     Carp::croak("PerCUDA: dim must be 1, 2 or 3") unless $self->{dim} =~ /\A[123]\z/;
     return $self;
@@ -42,14 +43,16 @@ sub generate ($self) {
     $self->_analyze_arguments;
     $self->_resolve;
     $self->_infer;
-    return { c => $self->_emit_kernel, args => $self->{args} };
+    return { c => $self->_emit_kernel, perl => $self->_emit_perl, args => $self->{args} };
 }
 
 # ---- argument kinds (array or scalar) are decided by how the kernel uses them ----
 
 sub _analyze_arguments ($self) {
-    my (%rank, %scalar);
+    my (%rank, %scalar, %written);
     _walk($self->{ast}, sub ($n) {
+        my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
+        $written{ $target->{name} } = 1 if $target && $target->{t} eq 'elem';
         if ($n->{t} eq 'elem') {
             my $r = scalar @{ $n->{idx} };
             _error("array \$$n->{name} is used with " . "$rank{$n->{name}} and $r subscripts", $n)
@@ -70,7 +73,13 @@ sub _analyze_arguments ($self) {
         _error("argument '$name' has unknown type '$type' (use i, f or d)") unless exists $RANK{$type};
         _error("argument name '$name' is reserved") if $self->_is_builtin_name($name);
         my $kind = $rank{$name} ? 'array' : $scalar{$name} ? 'scalar' : 'unused';
-        push @args, { name => $name, type => $type, kind => $kind, rank => $rank{$name} // 0 };
+        push @args, {
+            name    => $name,
+            type    => $type,
+            kind    => $kind,
+            rank    => $rank{$name} // 0,
+            written => $written{$name} ? 1 : 0,
+        };
     }
     for my $name (sort keys %rank) {
         _error("array \$$name is not an argument (kernels cannot declare arrays)") unless $seen{$name};
@@ -278,7 +287,7 @@ sub _infer ($self) {
 
 sub _type_of ($self, $e) {
     my $t = $e->{t};
-    return $e->{float} ? 'f' : 'i' if $t eq 'num';
+    return $e->{float} ? $self->{real} : 'i' if $t eq 'num';
     return $e->{sym}{type} if $t eq 'var' || $t eq 'elem';
     return $self->_type_of($e->{lhs}) if $t eq 'assign';
     return $self->_type_of($e->{e}) if $t eq 'pre' || $t eq 'post';
@@ -288,7 +297,7 @@ sub _type_of ($self, $e) {
     }
     if ($t eq 'call') {
         my $arg = $self->_type_of($e->{args}[0]);
-        return $e->{name} eq 'sqrt' ? _type_max('f', $arg)
+        return $e->{name} eq 'sqrt' ? _type_max($self->{real}, $arg)
              : $e->{name} eq 'abs'  ? $arg
              :                        'i';
     }
@@ -296,10 +305,10 @@ sub _type_of ($self, $e) {
         my ($l, $r) = ($self->_type_of($e->{l}), $self->_type_of($e->{r}));
         my $op = $e->{op};
         return _type_max($l, $r) if $op eq '+' || $op eq '-' || $op eq '*';
-        return _type_max('f', $l, $r) if $op eq '/';
+        return _type_max($self->{real}, $l, $r) if $op eq '/';
         if ($op eq '**') {
             return $l if _nonneg_int_literal($e->{r});
-            return _type_max('f', $l);
+            return _type_max($self->{real}, $l);
         }
         return _type_max($l, $r) if ($op eq '||' || $op eq '&&') && _pure($e);
         return 'i';
@@ -450,16 +459,17 @@ sub _cast ($self, $type, $e) {
     return $self->_type_of($e) eq $type ? $c : "(($CTYPE{$type})($c))";
 }
 
-sub _num ($e) {
+sub _num ($self, $e) {
     return sprintf('%d', $e->{value}) unless $e->{float};
-    my $s = sprintf('%.9g', $e->{value});
+    my $double = $self->{real} eq 'd';
+    my $s = sprintf($double ? '%.17g' : '%.9g', $e->{value});
     $s .= '.0' unless $s =~ /[.e]/;
-    return $s . 'f';
+    return $double ? $s : $s . 'f';
 }
 
 sub _expr ($self, $e) {
     my $t = $e->{t};
-    return _num($e) if $t eq 'num';
+    return $self->_num($e) if $t eq 'num';
     return $e->{sym}{cname} if $t eq 'var';
     return $self->_elem($e) if $t eq 'elem';
     if ($t eq 'un') {
@@ -540,6 +550,126 @@ sub _bin ($self, $e) {
         return $op eq '||' ? "($lc ? $lt : $rt)" : "($lc ? $rt : $lt)";
     }
     return '(' . $self->_expr($l) . " $op " . $self->_expr($r) . ')';
+}
+
+# ---- Perl emission (perl engine) ----
+#
+# The perl engine runs code generated from the same AST, following the GPU
+# semantics where Perl differs: comparisons yield 0/1, bit operations work on
+# 32-bit signed integers and stores into int variables truncate.
+
+my %PL_BITOP = ('&' => 'band', '|' => 'bor', '^' => 'bxor', '<<' => 'shl', '>>' => 'shr');
+
+sub _emit_perl ($self) {
+    my @axes   = @AXES[ 0 .. $self->{dim} - 1 ];
+    my @params = map {
+        $_->{kind} eq 'array' ? "\$v_$_->{name}" : $_->{kind} eq 'scalar' ? "\$p_$_->{name}" : "\$unused_$_->{name}"
+    } @{ $self->{args} };
+    push @params, map { "\$percuda_size_$_" } @axes;
+
+    my $out = "sub {\n    my (" . join(', ', @params) . ") = \@_;\n";
+    for my $arg (grep { $_->{kind} eq 'scalar' } @{ $self->{args} }) {
+        my $value = "\$p_$arg->{name}";
+        $value = "int($value)" if $arg->{type} eq 'i';
+        $out .= "    my \$v_$arg->{name} = $value;\n";
+    }
+    my $level = 1;
+    for my $i (0 .. $#axes) {
+        my $label = $i == $#axes ? 'PERCUDA_THREAD: ' : '';
+        $out .= _ind($level++) . "${label}for my \$percuda_$axes[$i] (0 .. \$percuda_size_$axes[$i] - 1) {\n";
+    }
+    $out .= join '', map { $self->_pl_stmt($_, $level) } @{ $self->{ast}{body} };
+    $out .= _ind(--$level) . "}\n" for @axes;
+    return $out . "    return;\n}\n";
+}
+
+sub _pl_block ($self, $block, $level) {
+    my $inner = join '', map { $self->_pl_stmt($_, $level + 1) } @{ $block->{body} };
+    return "{\n$inner" . _ind($level) . "}";
+}
+
+sub _pl_stmt ($self, $s, $level) {
+    my $ind = _ind($level);
+    my $t   = $s->{t};
+    if ($t eq 'my') {
+        my $init = $s->{init} ? $self->_pl_cast($s->{sym}{type}, $s->{init}) : '0';
+        return "${ind}my \$$s->{sym}{cname} = $init;\n";
+    }
+    return $ind . $self->_pl($s->{e}) . ";\n" if $t eq 'expr';
+    return $ind . $self->_pl_block($s, $level) . "\n" if $t eq 'block';
+    if ($t eq 'if') {
+        my @parts = map { '(' . $self->_pl($_->[0]) . ') ' . $self->_pl_block($_->[1], $level) } @{ $s->{conds} };
+        my $out = "${ind}if " . join(' elsif ', @parts);
+        $out .= ' else ' . $self->_pl_block($s->{else}, $level) if $s->{else};
+        return "$out\n";
+    }
+    if ($t eq 'while') {
+        return "${ind}while (" . $self->_pl($s->{cond}) . ') ' . $self->_pl_block($s->{body}, $level) . "\n";
+    }
+    if ($t eq 'for') {
+        my $init = $s->{init} ? $self->_pl_stmt($s->{init}, $level + 1) : '';
+        my $cond = $s->{cond} ? $self->_pl($s->{cond}) : '';
+        my $step = $s->{step} ? $self->_pl($s->{step}) : '';
+        return "$ind\{\n$init" . _ind($level + 1) . "for (; $cond; $step) "
+            . $self->_pl_block($s->{body}, $level + 1) . "\n$ind}\n";
+    }
+    if ($t eq 'foreach') {
+        return "${ind}for my \$$s->{sym}{cname} (" . $self->_pl($s->{from}) . ' .. ' . $self->_pl($s->{to}) . ') '
+            . $self->_pl_block($s->{body}, $level) . "\n";
+    }
+    return "${ind}last;\n"                if $t eq 'last';
+    return "${ind}next;\n"                if $t eq 'next';
+    return "${ind}next PERCUDA_THREAD;\n" if $t eq 'return';
+    _error("unsupported statement '$t'", $s);
+}
+
+sub _pl_cast ($self, $type, $e) {
+    my $code = $self->_pl($e);
+    return $type eq 'i' && $self->_type_of($e) ne 'i' ? "int($code)" : $code;
+}
+
+sub _pl_num ($e) {
+    return sprintf('%d', $e->{value}) unless $e->{float};
+    my $s = sprintf('%.17g', $e->{value});
+    return $s =~ /[.e]/ ? $s : "$s.0";
+}
+
+sub _pl ($self, $e) {
+    my $t = $e->{t};
+    return _pl_num($e) if $t eq 'num';
+    return "\$$e->{sym}{cname}" if $t eq 'var';
+    if ($t eq 'elem') {
+        return "\$v_$e->{name}" . join('', map { '->[' . $self->_pl($_) . ']' } @{ $e->{idx} });
+    }
+    if ($t eq 'un') {
+        my $inner = $self->_pl($e->{e});
+        return "(-$inner)"        if $e->{op} eq '-';
+        return "($inner ? 0 : 1)" if $e->{op} eq '!';
+        return "PerCUDA::Runtime::bnot($inner)";
+    }
+    return "($e->{op}" . $self->_pl($e->{e}) . ')' if $t eq 'pre';
+    return '(' . $self->_pl($e->{e}) . "$e->{op})" if $t eq 'post';
+    if ($t eq 'cond') {
+        return '(' . $self->_pl($e->{c}) . ' ? ' . $self->_pl($e->{a}) . ' : ' . $self->_pl($e->{b}) . ')';
+    }
+    if ($t eq 'assign') {
+        my $lhs  = $self->_pl($e->{lhs});
+        my $type = $self->_type_of($e->{lhs});
+        my $op   = $e->{op};
+        return "($lhs $op " . $self->_pl_cast($type, $e->{rhs}) . ')' if $op eq '=' || $op eq '||=' || $op eq '&&=';
+        my $bin = { t => 'bin', op => ($op =~ s/=\z//r), l => $e->{lhs}, r => $e->{rhs} };
+        return "($lhs = " . $self->_pl_cast($type, $bin) . ')';
+    }
+    return "$e->{name}(" . $self->_pl($e->{args}[0]) . ')' if $t eq 'call';
+    if ($t eq 'bin') {
+        my $op = $e->{op};
+        my ($l, $r) = ($self->_pl($e->{l}), $self->_pl($e->{r}));
+        return "PerCUDA::Runtime::$PL_BITOP{$op}($l, $r)" if $PL_BITOP{$op};
+        return "(($l $op $r) ? 1 : 0)" if $op =~ /\A(?:==|!=|<=|>=|<|>)\z/;
+        return "(($l $op $r) ? 1 : 0)" if ($op eq '||' || $op eq '&&') && !_pure($e);
+        return "($l $op $r)";
+    }
+    _error("unsupported expression '$t'");
 }
 
 1;

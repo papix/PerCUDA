@@ -48,4 +48,16 @@ cmp_ok $same / $total, '>=', 0.97, "perl and gpu agree on $same/$total pixels";
 is $result{gpu}[ $W * 2 / 3 ][ $W / 2 ], 256, 'origin is in the set';
 is $result{gpu}[0][0], 1, 'corner escapes immediately';
 
+my $double = PerCUDA->new(
+    dim       => 2,
+    engine    => 'gpu',
+    precision => 'double',
+    argument  => [ out => 'i', max => 'i' ],
+    size      => 'out',
+    retval    => ['out'],
+    source    => $KERNEL,
+);
+is_deeply scalar $double->run([ map { [ (0) x $W ] } 1 .. $W ], 256), $result{perl},
+    'precision => double matches perl on every pixel';
+
 done_testing;
