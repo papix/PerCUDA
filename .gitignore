@@ -1,10 +1,47 @@
-/.build/
-/_build/
+# Build output (Module::Build::Tiny)
 /Build
-/blib
-/local/
-MYMETA.*
+/_build/
+/_build_params
+/blib/
+/MYMETA.*
+
+# Minilla
+/.build/
 /PerCUDA-*
+
+# Local dependencies
+/local/
+/.carton/
+/carton.lock
+/cpanfile.snapshot
+
+# Profiling and coverage
+nytprof.out
+nytprof/
+cover_db/
+
+# Output of the examples
 *.pgm
+
+# Secrets and machine-local configuration: never commit these
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+.netrc
+.pause
+.pause-*
+CLAUDE.local.md
+.claude/
+.perl-version
+
+# Editors and OS
+*.bak
+*.old
 *~
 *.swp
+.idea/
+.vscode/
+.DS_Store

@@ -11,8 +11,8 @@ use PerCUDA::Engine::GPU;
 our $VERSION = "0.01";
 
 sub new ($class, %args) {
-    my $source = $args{source} // Carp::croak("PerCUDA: 'source' is required");
-    my $dim    = $args{dim} // 1;
+    my $source = $args{source}   // Carp::croak("PerCUDA: 'source' is required");
+    my $dim    = $args{dim}      // 1;
     my $pairs  = $args{argument} // Carp::croak("PerCUDA: 'argument' is required");
     Carp::croak("PerCUDA: 'argument' must be an array reference of name => type pairs")
         unless ref $pairs eq 'ARRAY' && @$pairs % 2 == 0;
@@ -43,7 +43,7 @@ sub new ($class, %args) {
     my $engine = $args{engine};
     Carp::croak("PerCUDA: engine must be 'gpu' or 'perl'") if defined $engine && $engine !~ /\A(?:gpu|perl)\z/;
 
-    my $self = bless { analyzer => $an, arguments => \@arguments, perl_mode => $perl_mode }, $class;
+    my $self   = bless { analyzer => $an, arguments => \@arguments, perl_mode => $perl_mode }, $class;
     my %common = (analyzer => $an, size => $size, retval => $retval);
 
     my $context;
@@ -53,27 +53,28 @@ sub new ($class, %args) {
             if !$context && defined $engine;
     }
 
-    $self->{engine} = $context
+    $self->{engine} =
+        $context
         ? PerCUDA::Engine::GPU->new(
-            %common,
-            context   => $context,
-            source    => $self->cuda_source,
-            precision => $precision,
-            cache_dir => $args{cache_dir},
+        %common,
+        context   => $context,
+        source    => $self->cuda_source,
+        precision => $precision,
+        cache_dir => $args{cache_dir},
         )
         : PerCUDA::Engine::Perl->new(%common, mode => $perl_mode);
     return $self;
 }
 
-sub engine ($self) { $self->{engine}->name }
+sub engine ($self) { return $self->{engine}->name }
 
 sub cuda_source ($self) {
     return $self->{cuda_source} //= PerCUDA::CodeGen::CUDA->new($self->{analyzer})->generate;
 }
 
 sub perl_source ($self) {
-    return $self->{perl_source}
-        //= PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{perl_mode})->generate;
+    return $self->{perl_source} //=
+        PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{perl_mode})->generate;
 }
 
 sub run ($self, @values) {
@@ -87,6 +88,8 @@ sub run ($self, @values) {
 __END__
 
 =encoding utf-8
+
+=for stopwords GPGPU NVRTC PerCUDA cubin Fukumoto Ishiura IEICE inf nan ms
 
 =head1 NAME
 
@@ -130,12 +133,20 @@ PerCUDA - GPGPU framework for Perl: write CUDA kernels in Perl
 
 PerCUDA lets you write GPU kernels in Perl. The kernel source is translated
 into CUDA C++, compiled with NVRTC for the device's own architecture, and
-launched through L<CUDA::DriverAPI>. Compiled code is cached on disk. The same kernel can also run in the perl interpreter, so
+launched through L<CUDA::DriverAPI>. Compiled code is cached on disk. The
+same kernel can also run in the perl interpreter, with the same results, so
 scripts can be developed and tested on machines without a GPU.
+
+    kernel (Perl) -> AST -> CUDA C++ -> NVRTC -> cubin (cached) -> CUDA::DriverAPI -> GPU
+                         -> Perl (thread loops, GPU semantics) -> perl interpreter
 
 The kernel body runs once per thread. C<$x>, C<$y> and C<$z> hold the thread
 index and C<$size_x>, C<$size_y> and C<$size_z> the grid size (up to C<dim>
 axes). The grid size is the shape of the C<size> argument.
+
+This is a rebuild of the framework described in "PerCUDA: CUDA Binding
+Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
+"Perl meets GPU" (Perl Advent Calendar 2013).
 
 =head1 METHODS
 
@@ -185,7 +196,7 @@ share one CUDA context.
 Runs the kernel with one value per declared argument, in order. Array
 arguments are array references; an empty array reference takes the shape of
 the C<size> argument and is filled with zeros. Returns the C<retval> arrays
-(the first one in scalar context). The caller's retval arrays are also updated
+(the first one in scalar context). The caller's C<retval> arrays are also updated
 in place.
 
 When calling C<run> repeatedly, passing the same output array every time is
@@ -265,10 +276,32 @@ negative zero (C<0.0 * -1>), and dividing by it gives inf instead of -inf.
 
 =back
 
+=head1 PERFORMANCE
+
+On a GeForce RTX 4070 SUPER, a 1024 x 1024 single precision matrix
+multiplication (C<eg/benchmark.pl>) takes about 17 ms per C<run> on the GPU
+(10 ms when the output array is reused), including the conversion of the
+Perl arrays, against 90 s on the perl engine. Compiled kernels and the CUDA
+context are reused, so only the first C<new> and C<run> of a process pay for
+the CUDA initialization (about 0.15 s).
+
+=head1 EXAMPLES
+
+    perl eg/matmul.pl [gpu|perl]
+    perl eg/mandelbrot.pl [gpu|perl] [width] [max_iterations] > mandelbrot.pgm
+    perl eg/benchmark.pl [gpu|perl] [n]
+
 =head1 DEPENDENCIES
 
-Perl 5.40 or later, and L<CUDA::DriverAPI> with NVRTC
-(only for the GPU engine).
+Perl 5.40 or later. The GPU engine needs L<CUDA::DriverAPI> with NVRTC (CUDA
+12.0 or later) and an NVIDIA GPU; without them, kernels run on the perl
+engine.
+
+=head1 SEE ALSO
+
+L<CUDA::DriverAPI>, L<https://github.com/papix/CUDA-DriverAPI>,
+L<https://qiita.com/papix/items/fee3e60e21f2ab1f1c76>,
+L<https://ist.ksc.kwansei.ac.jp/~ishiura/publications/T2014-01b.pdf>
 
 =head1 LICENSE
 

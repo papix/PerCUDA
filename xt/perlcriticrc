@@ -1,0 +1,15 @@
+severity = stern
+verbose  = %f:%l:%c: %m (%p)\n
+
+# error() and _error() always croak (PerCUDA::Analyzer, PerCUDA::Parser).
+[Subroutines::RequireFinalReturn]
+terminal_funcs   = error
+terminal_methods = _error
+
+[TestingAndDebugging::ProhibitNoWarnings]
+allow_with_category_restriction = 1
+
+# PerCUDA::Runtime holds the helpers of the generated Perl code and lives next
+# to the engine that loads it.
+[Modules::ProhibitMultiplePackages]
+severity = 1

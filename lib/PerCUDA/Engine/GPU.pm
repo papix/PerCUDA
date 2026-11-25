@@ -15,6 +15,7 @@ my %SIZE  = (i => 4,     f => 4,     d => 8);
 my %BLOCK = (1 => [ 256, 1, 1 ], 2 => [ 32, 8, 1 ], 3 => [ 32, 4, 2 ]);    # CUDA x, y, z
 
 sub init ($self) {
+
     # context, source, precision, cache_dir
     $self->{params}   = $self->{analyzer}->kernel_params;
     $self->{buffers}  = {};    # argument index => CUDA::DriverAPI::Buffer
@@ -24,9 +25,10 @@ sub init ($self) {
         cache_dir => $self->{cache_dir},
     );
     @$self{qw(program from_cache)} = $self->{compiler}->program($self->{source});
+    return;
 }
 
-sub name ($self) { 'gpu' }
+sub name ($self) { return 'gpu' }
 
 # One context per device, shared by every runner for the life of the process:
 # releasing the last reference destroys the primary context, and creating it
@@ -54,13 +56,16 @@ sub _launch ($self, @launch) {
 
     # The driver loads a cached image on its first use, so a broken cache
     # entry fails here: compile again and retry once.
-    my $ok = eval { $ctx->run($self->{program}, @launch); 1 };
+    my $ok  = eval { $ctx->run($self->{program}, @launch); 1 };
     my $err = $@;
     $self->{from_cache} = 0;
     return if $ok;
-    die $err unless $err =~ /CUDA_ERROR_(?:INVALID_IMAGE|INVALID_PTX|INVALID_SOURCE|NO_BINARY_FOR_GPU|UNSUPPORTED_PTX_VERSION)/;
+    die $err
+        unless $err =~
+        /CUDA_ERROR_(?:INVALID_IMAGE|INVALID_PTX|INVALID_SOURCE|NO_BINARY_FOR_GPU|UNSUPPORTED_PTX_VERSION)/;
     $self->{program} = $self->{compiler}->compile($self->{source});
     $ctx->run($self->{program}, @launch);
+    return;
 }
 
 sub run ($self, @values) {
@@ -84,10 +89,10 @@ sub run ($self, @values) {
 
     my @kernel_args = map {
         my $p = $_;
-          $p->{kind} eq 'array'  ? $buf{ $p->{arg} }
-        : $p->{kind} eq 'scalar' ? [ $TYPE{ $p->{type} } => $values[ $p->{arg} ] ]
-        : $p->{kind} eq 'size'   ? [ i32 => $grid->[ $p->{axis} ] ]
-        :                          [ i32 => $layout->{arrays}{ $p->{arg} }{dims}[ $p->{axis} ] ];
+              $p->{kind} eq 'array'  ? $buf{ $p->{arg} }
+            : $p->{kind} eq 'scalar' ? [ $TYPE{ $p->{type} } => $values[ $p->{arg} ] ]
+            : $p->{kind} eq 'size'   ? [ i32                 => $grid->[ $p->{axis} ] ]
+            :                          [ i32 => $layout->{arrays}{ $p->{arg} }{dims}[ $p->{axis} ] ];
     } @{ $self->{params} };
 
     # the last Perl axis runs along CUDA's x axis (see PerCUDA::CodeGen::CUDA)
@@ -101,6 +106,7 @@ sub run ($self, @values) {
     my @results;
     for my $name (@{ $self->{retval} }) {
         my $i = $self->{index}{$name};
+
         # filled in place, reusing the caller's rows and scalars
         $buf{$i}->read_array(
             type => $TYPE{ $self->{args}[$i]{type} },

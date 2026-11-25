@@ -3,11 +3,7 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 use PerCUDA;
 
-my $array = [
-    [ 1 .. 3 ],
-    [ 4 .. 6 ],
-    [ 7 .. 9 ],
-];
+my $array = [ [ 1 .. 3 ], [ 4 .. 6 ], [ 7 .. 9 ], ];
 
 my $runner = PerCUDA->new(
     dim      => 2,
@@ -33,4 +29,4 @@ KERNEL
 
 my $retval = $runner->run($array, $array, [], 3);
 say 'engine: ', $runner->engine;
-say join ' ', @$_ for @$retval;
+say join ' ',   @$_ for @$retval;

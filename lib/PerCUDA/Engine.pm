@@ -1,6 +1,6 @@
 package PerCUDA::Engine;
 use v5.40;
-use Carp ();
+use Carp          ();
 use PerCUDA::Data qw(shape);
 
 # Base class of the engines. Both engines share the calling convention of
@@ -9,11 +9,11 @@ use PerCUDA::Data qw(shape);
 
 sub new ($class, %args) {
     my $self = bless {%args}, $class;    # analyzer, size, retval (+ engine specific)
-    my $an = $self->{analyzer};
+    my $an   = $self->{analyzer};
     $self->{args}      = $an->args;
     $self->{dim}       = $an->dim;
     $self->{index}     = { map { $self->{args}[$_]{name} => $_ } 0 .. $#{ $self->{args} } };
-    $self->{is_retval} = { map { $_ => 1 } @{ $self->{retval} } };
+    $self->{is_retval} = { map { $_                      => 1 } @{ $self->{retval} } };
     $self->init;
     return $self;
 }

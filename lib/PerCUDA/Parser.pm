@@ -40,7 +40,7 @@ sub _tokenize ($self, $src) {
     pos($src) = 0;
     while (1) {
         if ($src =~ /\G([ \t\r\f]+|#[^\n]*)/gc) { next }
-        if ($src =~ /\G\n/gc) { $line++; next }
+        if ($src =~ /\G\n/gc)                   { $line++; next }
         last if pos($src) >= length $src;
         if ($src =~ /\G\$([A-Za-z_]\w*)/gc) {
             push @tokens, { type => 'var', value => $1, line => $line };
@@ -50,12 +50,13 @@ sub _tokenize ($self, $src) {
         }
         elsif ($src =~ /\G((?:\d[\d_]*(?:\.(?!\.)\d*)?|\.\d+)(?:[eE][-+]?\d+)?)/gc) {
             my $text = $1 =~ tr/_//dr;
-            push @tokens, {
+            push @tokens,
+                {
                 type  => 'num',
                 value => $text + 0,
                 float => ($text =~ /[.eE]/ ? 1 : 0),
                 line  => $line,
-            };
+                };
         }
         elsif ($src =~ /\G([A-Za-z_]\w*)/gc) {
             push @tokens, { type => ($KEYWORD{$1} ? 'kw' : 'ident'), value => $1, line => $line };
@@ -75,8 +76,8 @@ sub _tokenize ($self, $src) {
     return \@tokens;
 }
 
-sub _peek ($self, $n = 0) { $self->{tokens}[ $self->{pos} + $n ] // $self->{tokens}[-1] }
-sub _next ($self) { $self->{tokens}[ $self->{pos}++ ] }
+sub _peek ($self, $n = 0) { return $self->{tokens}[ $self->{pos} + $n ] // $self->{tokens}[-1] }
+sub _next ($self)         { return $self->{tokens}[ $self->{pos}++ ] }
 
 sub _is ($self, $type, $value = undef, $n = 0) {
     my $tok = $self->_peek($n);
@@ -148,7 +149,7 @@ sub _statement ($self) {
     # statement modifiers: STMT if EXPR; / STMT unless EXPR;
     if (my $mod = $self->_accept(kw => 'if') // $self->_accept(kw => 'unless')) {
         my $cond = $self->_expr;
-        $cond = { t => 'un', op => '!', e => $cond } if $mod->{value} eq 'unless';
+        $cond = { t => 'un', op    => '!', e => $cond } if $mod->{value} eq 'unless';
         $stmt = { t => 'if', conds => [ [ $cond, { t => 'block', body => [$stmt] } ] ], else => undef };
     }
     $self->_expect(op => ';') unless $self->_is(op => '}') || $self->_is('eof');
@@ -160,8 +161,11 @@ sub _simple_statement ($self) {
     for my $kw (qw(last next return)) {
         if ($self->_accept(kw => $kw)) {
             $self->_error("'$kw' with a value is not supported")
-                unless $self->_is(op => ';') || $self->_is(op => '}') || $self->_is(kw => 'if')
-                || $self->_is(kw => 'unless') || $self->_is('eof');
+                unless $self->_is(op => ';')
+                || $self->_is(op => '}')
+                || $self->_is(kw => 'if')
+                || $self->_is(kw => 'unless')
+                || $self->_is('eof');
             return { t => $kw };
         }
     }
@@ -177,6 +181,7 @@ sub _my ($self) {
 }
 
 sub _for ($self) {
+
     # foreach style: for my $i (A .. B) { ... }
     if ($self->_is(kw => 'my') && $self->_is(var => undef, 1) && $self->_is(op => '(', 2)) {
         $self->_next;
@@ -186,8 +191,14 @@ sub _for ($self) {
         $self->_expect(op => '..');
         my $to = $self->_expr_no_range;
         $self->_expect(op => ')');
-        return { t => 'foreach', name => $var->{value}, from => $from, to => $to,
-            body => $self->_block, line => $var->{line} };
+        return {
+            t    => 'foreach',
+            name => $var->{value},
+            from => $from,
+            to   => $to,
+            body => $self->_block,
+            line => $var->{line}
+        };
     }
     $self->_error('foreach needs a lexical loop variable (for my $i (A .. B))') unless $self->_is(op => '(');
 
@@ -211,7 +222,7 @@ sub _paren_expr ($self) {
 
 # ---- expressions (Perl precedence, lowest first) ----
 
-sub _expr ($self) { $self->_low_or }
+sub _expr ($self) { return $self->_low_or }
 
 sub _low_or ($self) {
     my $l = $self->_low_and;
@@ -237,7 +248,7 @@ sub _low_not ($self) {
 my %ASSIGN_OP = map { $_ => 1 } qw(= += -= *= /= %= **= &= |= ^= <<= >>= &&= ||=);
 
 sub _assign_expr ($self) {
-    my $l = $self->_ternary;
+    my $l   = $self->_ternary;
     my $tok = $self->_peek;
     if ($tok->{type} eq 'op' && $ASSIGN_OP{ $tok->{value} }) {
         $self->_error('left side of assignment must be a variable or array element')
@@ -265,7 +276,7 @@ sub _range ($self) {
     return $e;
 }
 
-sub _expr_no_range ($self) { $self->_oror }
+sub _expr_no_range ($self) { return $self->_oror }
 
 sub _binary_level ($self, $next, @ops) {
     my $l = $self->$next;
@@ -281,10 +292,10 @@ sub _binary_level ($self, $next, @ops) {
     return $l;
 }
 
-sub _oror   ($self) { $self->_binary_level('_andand', '||') }
-sub _andand ($self) { $self->_binary_level('_bitor', '&&') }
-sub _bitor  ($self) { $self->_binary_level('_bitand', '|', '^') }
-sub _bitand ($self) { $self->_binary_level('_equality', '&') }
+sub _oror   ($self) { return $self->_binary_level('_andand',   '||') }
+sub _andand ($self) { return $self->_binary_level('_bitor',    '&&') }
+sub _bitor  ($self) { return $self->_binary_level('_bitand',   '|', '^') }
+sub _bitand ($self) { return $self->_binary_level('_equality', '&') }
 
 sub _equality ($self) {
     my $e = $self->_binary_level('_relational', '==', '!=', '<=>');
@@ -292,12 +303,12 @@ sub _equality ($self) {
     return $e;
 }
 
-sub _contains_op ($e, $op) { $e->{t} eq 'bin' && $e->{op} eq $op }
+sub _contains_op ($e, $op) { return $e->{t} eq 'bin' && $e->{op} eq $op }
 
-sub _relational ($self) { $self->_binary_level('_shift', '<=', '>=', '<', '>') }
-sub _shift      ($self) { $self->_binary_level('_additive', '<<', '>>') }
-sub _additive   ($self) { $self->_binary_level('_multiplicative', '+', '-') }
-sub _multiplicative ($self) { $self->_binary_level('_unary', '*', '/', '%') }
+sub _relational     ($self) { return $self->_binary_level('_shift',          '<=', '>=', '<', '>') }
+sub _shift          ($self) { return $self->_binary_level('_additive',       '<<', '>>') }
+sub _additive       ($self) { return $self->_binary_level('_multiplicative', '+',  '-') }
+sub _multiplicative ($self) { return $self->_binary_level('_unary',          '*',  '/', '%') }
 
 sub _unary ($self) {
     for my $op (qw(! ~ - +)) {
@@ -312,6 +323,7 @@ sub _unary ($self) {
 sub _power ($self) {
     my $base = $self->_incdec;
     if ($self->_accept(op => '**')) {
+
         # right associative and binds tighter than unary minus on the left only
         return { t => 'bin', op => '**', l => $base, r => $self->_unary };
     }

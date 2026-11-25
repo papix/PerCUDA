@@ -17,11 +17,12 @@ sub init ($self) {
     $self->{code} = eval $self->{perl_source};    ## no critic (ProhibitStringyEval)
     Carp::croak("PerCUDA: failed to compile the kernel for the perl engine: $@\n$self->{perl_source}")
         unless $self->{code};
+    return;
 }
 
-sub name ($self) { 'perl' }
+sub name ($self) { return 'perl' }
 
-sub perl_source ($self) { $self->{perl_source} }
+sub perl_source ($self) { return $self->{perl_source} }
 
 sub run ($self, @values) {
     my $layout = $self->layout(\@values);
@@ -29,13 +30,15 @@ sub run ($self, @values) {
     for my $i (sort { $a <=> $b } keys %{ $layout->{arrays} }) {
         my $arg = $self->{args}[$i];
         my ($dims, $empty) = @{ $layout->{arrays}{$i} }{qw(dims empty)};
+
         # The GPU sees the values as converted to the declared type, and only
         # retval arrays are copied back to the caller.
         my $convert = $arg->{type} eq 'i' || ($arg->{type} eq 'f' && ($self->{mode} // 'compat') ne 'fast');
-        my $converted = $empty ? zeros($dims)
+        my $converted =
+              $empty   ? zeros($dims)
             : $convert ? convert_array($values[$i], $arg->{rank}, $arg->{type})
             : $arg->{written} && !$self->{is_retval}{ $arg->{name} } ? copy_array($values[$i], $arg->{rank})
-            : undef;
+            :                                                          undef;
         next unless $converted;
         if ($self->{is_retval}{ $arg->{name} }) {
             @{ $values[$i] } = @$converted;    # updated in place, like the GPU engine
@@ -50,7 +53,7 @@ sub run ($self, @values) {
 
 package PerCUDA::Runtime;
 
-sub _f32 ($v) { unpack 'f', pack 'f', $v }
+sub _f32 ($v) { return unpack 'f', pack 'f', $v }
 
 my $INF = 9**9**9;
 my $NAN = -sin($INF);
@@ -62,10 +65,10 @@ sub div0 ($l, $r) {
     return ($l < 0) != $negative_zero ? -$INF : $INF;
 }
 
-sub div ($l, $r) { $r != 0 ? $l / $r : div0($l, $r) }
+sub div ($l, $r) { return $r != 0 ? $l / $r : div0($l, $r) }
 
 # percuda_mod of the generated CUDA code returns 0 for a zero divisor.
-sub mod ($l, $r) { int($r) ? $l % $r : 0 }
+sub mod ($l, $r) { return int($r) ? $l % $r : 0 }
 
 # x ** n by repeated squaring, in the same order and precision as
 # percuda_powi_* in the generated CUDA code.
@@ -93,14 +96,14 @@ sub powi_d ($x, $n) {
     use integer;
 
     # Integer operations on 32-bit signed integers, as on the GPU.
-    sub _i32 ($v) { unpack 'l', pack 'L', $v & 0xFFFFFFFF }
+    sub _i32 ($v) { return unpack 'l', pack 'L', $v & 0xFFFFFFFF }
 
-    sub band ($l, $r) { _i32(_i32($l) & _i32($r)) }
-    sub bor  ($l, $r) { _i32(_i32($l) | _i32($r)) }
-    sub bxor ($l, $r) { _i32(_i32($l) ^ _i32($r)) }
-    sub bnot ($v)     { _i32(~_i32($v)) }
-    sub shl  ($l, $r) { _i32(_i32($l) << _i32($r)) }
-    sub shr  ($l, $r) { _i32($l) >> _i32($r) }
+    sub band ($l, $r) { return _i32(_i32($l) & _i32($r)) }
+    sub bor  ($l, $r) { return _i32(_i32($l) | _i32($r)) }
+    sub bxor ($l, $r) { return _i32(_i32($l) ^ _i32($r)) }
+    sub bnot ($v)     { return _i32(~_i32($v)) }
+    sub shl  ($l, $r) { return _i32(_i32($l) << _i32($r)) }
+    sub shr  ($l, $r) { return _i32($l) >> _i32($r) }
 
     sub powi_i ($x, $n) {
         my $r = 1;

@@ -24,11 +24,21 @@ $c->[$x][$y] = $sum;
 KERNEL
 );
 
-my $a = [ map { my $i = $_; [ map { ($i + $_) % 7 } 0 .. $n - 1 ] } 0 .. $n - 1 ];
-my $b = [ map { my $i = $_; [ map { ($i * $_) % 5 } 0 .. $n - 1 ] } 0 .. $n - 1 ];
+my $a = [
+    map {
+        my $i = $_;
+        [ map { ($i + $_) % 7 } 0 .. $n - 1 ]
+    } 0 .. $n - 1
+];
+my $b = [
+    map {
+        my $i = $_;
+        [ map { ($i * $_) % 5 } 0 .. $n - 1 ]
+    } 0 .. $n - 1
+];
 
 for my $round (1 .. ($engine eq 'gpu' ? 3 : 1)) {
     my $start = time;
-    my $c = $runner->run($a, $b, [], $n);
+    my $c     = $runner->run($a, $b, [], $n);
     printf "engine=%s n=%d round=%d: %.4fs (c[1][2]=%s)\n", $runner->engine, $n, $round, time - $start, $c->[1][2];
 }

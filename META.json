@@ -1,0 +1,74 @@
+{
+   "abstract" : "GPGPU framework for Perl: write CUDA kernels in Perl",
+   "author" : [
+      "papix <mail@papix.net>"
+   ],
+   "dynamic_config" : 0,
+   "generated_by" : "Minilla/v3.3.2",
+   "license" : [
+      "perl_5"
+   ],
+   "meta-spec" : {
+      "url" : "http://search.cpan.org/perldoc?CPAN::Meta::Spec",
+      "version" : "2"
+   },
+   "name" : "PerCUDA",
+   "no_index" : {
+      "directory" : [
+         "t",
+         "xt",
+         "inc",
+         "share",
+         "eg",
+         "examples",
+         "author",
+         "builder"
+      ]
+   },
+   "prereqs" : {
+      "configure" : {
+         "requires" : {
+            "Module::Build::Tiny" : "0.053"
+         }
+      },
+      "develop" : {
+         "requires" : {
+            "Minilla" : "v3.3.2",
+            "Perl::Critic" : "1.156",
+            "Perl::Tidy" : "20260826",
+            "Test::CPAN::Meta" : "0.25",
+            "Test::MinimumVersion::Fast" : "0.04",
+            "Test::PAUSE::Permissions" : "0.07",
+            "Test::Perl::Critic" : "1.04",
+            "Test::Pod" : "1.52",
+            "Test::Spellunker" : "v0.4.0"
+         }
+      },
+      "runtime" : {
+         "recommends" : {
+            "CUDA::DriverAPI" : "0.02"
+         },
+         "requires" : {
+            "Carp" : "0",
+            "Digest::MD5" : "0",
+            "Exporter" : "0",
+            "File::Path" : "0",
+            "File::Spec" : "0",
+            "File::Temp" : "0",
+            "List::Util" : "0",
+            "Scalar::Util" : "0",
+            "parent" : "0",
+            "perl" : "v5.40.0"
+         }
+      },
+      "test" : {
+         "requires" : {
+            "Test2::V0" : "0"
+         }
+      }
+   },
+   "release_status" : "unstable",
+   "version" : "0.01",
+   "x_serialization_backend" : "JSON::PP version 4.16",
+   "x_static_install" : 1
+}

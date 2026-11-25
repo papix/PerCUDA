@@ -1,10 +1,10 @@
 use v5.40;
-use Test::More;
+use Test2::V0;
 use lib 't/lib';
 use PerCUDATest;
 use PerCUDA;
 
-plan skip_all => 'no GPU' unless gpu_available();
+skip_all 'no GPU' unless gpu_available();
 
 # The set boundary amplifies any rounding difference, so this checks that
 # both engines round every operation the same way.
@@ -38,12 +38,13 @@ for my $precision (qw(single double)) {
         );
         $result{$precision}{$engine} = $r->run([ map { [ (0) x $W ] } 1 .. $W ], 256);
     }
-    is_deeply $result{$precision}{gpu}, $result{$precision}{perl}, "$precision: perl and gpu agree on every pixel";
+    is $result{$precision}{gpu}, $result{$precision}{perl}, "$precision: perl and gpu agree on every pixel";
 }
 
 my $gpu = $result{single}{gpu};
 is $gpu->[ $W * 2 / 3 ][ $W / 2 ], 256, 'origin is in the set';
-is $gpu->[0][0], 1, 'corner escapes immediately';
-isnt join(',', map { @$_ } @$gpu), join(',', map { @$_ } @{ $result{double}{gpu} }), 'single and double precision differ';
+is $gpu->[0][0],                   1,   'corner escapes immediately';
+isnt join(',', map { @$_ } @$gpu), join(',', map { @$_ } @{ $result{double}{gpu} }),
+    'single and double precision differ';
 
 done_testing;

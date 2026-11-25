@@ -3,7 +3,13 @@ Revision history for Perl extension PerCUDA
 {{$NEXT}}
 
     - Rebuild of the 2013 prototype for Perl 5.40+ and CUDA 12+
-    - Translate kernels written in Perl to CUDA C++ and compile them with NVRTC
-    - Run kernels on the GPU through CUDA::DriverAPI or in the perl interpreter
-    - Cache compiled kernels on disk
-    - Perl engine follows the GPU semantics; precision option
+    - Translate kernels written in Perl to CUDA C++ and compile them with
+      NVRTC through CUDA::DriverAPI; cache compiled kernels on disk and
+      recompile a broken cache entry
+    - Run kernels on the GPU or in the perl interpreter with the same results
+      (perl_mode => 'compat'), or faster and slightly different ('fast')
+    - Add precision => 'single' | 'double' for both engines
+    - Pass scalars by value, coalesce memory access, reuse device buffers and
+      the CUDA context, convert arrays in C (CUDA::DriverAPI write_array/read_array)
+    - Add examples (eg/), author tests, perltidy, Perl::Critic, gitleaks,
+      pre-commit hooks and GitHub Actions

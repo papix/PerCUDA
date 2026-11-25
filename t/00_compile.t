@@ -1,7 +1,7 @@
 use v5.40;
-use Test::More;
+use Test2::V0;
 
-use_ok $_ for qw(
+my @modules = qw(
     PerCUDA
     PerCUDA::Parser
     PerCUDA::Analyzer
@@ -13,5 +13,9 @@ use_ok $_ for qw(
     PerCUDA::Engine::Perl
     PerCUDA::Engine::GPU
 );
+
+for my $module (@modules) {
+    ok lives { eval "require $module; 1" or die $@ }, "load $module" or note $@;
+}
 
 done_testing;

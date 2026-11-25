@@ -1,1 +1,6 @@
 name = "PerCUDA"
+module_maker = "ModuleBuildTiny"
+
+# Repository-only files that users of the CPAN distribution do not need.
+[FileGatherer]
+exclude_match = ['^AGENTS\.md$', '^CLAUDE\.md$', '^author/lint\.sh$']

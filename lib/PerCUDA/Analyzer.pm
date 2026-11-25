@@ -2,7 +2,7 @@ package PerCUDA::Analyzer;
 use v5.40;
 use Carp ();
 use Exporter 'import';
-use List::Util qw(max);
+use List::Util   qw(max);
 use Scalar::Util qw(refaddr);
 
 # Semantic analysis of a kernel AST (PerCUDA::Parser): decides whether each
@@ -12,7 +12,7 @@ use Scalar::Util qw(refaddr);
 
 our @EXPORT_OK = qw(walk is_pure assigned_symbols nonneg_int_literal type_max error);
 
-my %RANK = (i => 0, f => 1, d => 2);
+my %RANK         = (i => 0, f => 1, d => 2);
 my @TYPE_BY_RANK = qw(i f d);
 our @AXES = qw(x y z);
 
@@ -31,17 +31,19 @@ sub new ($class, %args) {
     return $self;
 }
 
-sub ast  ($self) { $self->{ast} }
-sub dim  ($self) { $self->{dim} }
-sub real ($self) { $self->{real} }
-sub axes ($self) { @AXES[ 0 .. $self->{dim} - 1 ] }
+sub ast  ($self) { return $self->{ast} }
+sub dim  ($self) { return $self->{dim} }
+sub real ($self) { return $self->{real} }
+sub axes ($self) { return @AXES[ 0 .. $self->{dim} - 1 ] }
 
 # [ { name, type, kind => array|scalar|unused, rank, read, written } ] in declaration order
-sub args ($self) { $self->{args} }
+sub args ($self) { return $self->{args} }
 
-sub new_id ($self) { $self->{next_id}++ }
+sub new_id ($self) { return $self->{next_id}++ }
 
-sub type_max (@types) { $TYPE_BY_RANK[ max map { $RANK{$_} } @types ] }
+sub type_max (@types) {
+    return $TYPE_BY_RANK[ max map { $RANK{$_} } @types ];
+}
 
 sub error ($msg, $node = undef) {
     my $where = $node && $node->{line} ? " at kernel line $node->{line}" : '';
@@ -56,9 +58,10 @@ sub walk ($node, $cb) {
     }
     $cb->($node) if exists $node->{t};
     for my $key (sort keys %$node) {
-        next if $key eq 'sym';
+        next                     if $key eq 'sym';
         walk($node->{$key}, $cb) if ref $node->{$key};
     }
+    return;
 }
 
 sub is_pure ($e) {
@@ -70,10 +73,13 @@ sub is_pure ($e) {
 # Symbols assigned anywhere inside $node (by =, op=, ++ or --).
 sub assigned_symbols ($node) {
     my %sym;
-    walk($node, sub ($n) {
-        my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
-        $sym{ refaddr $target->{sym} } = 1 if $target && $target->{t} eq 'var';
-    });
+    walk(
+        $node,
+        sub ($n) {
+            my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
+            $sym{ refaddr $target->{sym} } = 1 if $target && $target->{t} eq 'var';
+        }
+    );
     return \%sym;
 }
 
@@ -82,23 +88,26 @@ sub assigned_symbols ($node) {
 sub _analyze_arguments ($self) {
     my (%rank, %scalar, %written, %read);
     my %plain_store;    # elem nodes that are only stored into ($a->[$i] = ...)
-    walk($self->{ast}, sub ($n) {
-        my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
-        if ($target && $target->{t} eq 'elem') {
-            $written{ $target->{name} } = 1;
-            $plain_store{ refaddr $target } = 1 if $n->{t} eq 'assign' && $n->{op} eq '=';
+    walk(
+        $self->{ast},
+        sub ($n) {
+            my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
+            if ($target && $target->{t} eq 'elem') {
+                $written{ $target->{name} } = 1;
+                $plain_store{ refaddr $target } = 1 if $n->{t} eq 'assign' && $n->{op} eq '=';
+            }
+            if ($n->{t} eq 'elem') {
+                my $r = scalar @{ $n->{idx} };
+                error("array \$$n->{name} is used with $rank{$n->{name}} and $r subscripts", $n)
+                    if $rank{ $n->{name} } && $rank{ $n->{name} } != $r;
+                $rank{ $n->{name} } = $r;
+                $read{ $n->{name} } = 1 unless $plain_store{ refaddr $n };
+            }
+            elsif ($n->{t} eq 'var') {
+                $scalar{ $n->{name} } = 1;
+            }
         }
-        if ($n->{t} eq 'elem') {
-            my $r = scalar @{ $n->{idx} };
-            error("array \$$n->{name} is used with $rank{$n->{name}} and $r subscripts", $n)
-                if $rank{ $n->{name} } && $rank{ $n->{name} } != $r;
-            $rank{ $n->{name} } = $r;
-            $read{ $n->{name} } = 1 unless $plain_store{ refaddr $n };
-        }
-        elsif ($n->{t} eq 'var') {
-            $scalar{ $n->{name} } = 1;
-        }
-    });
+    );
 
     my %seen;
     my @args;
@@ -109,19 +118,21 @@ sub _analyze_arguments ($self) {
         error("argument '$name' has unknown type '" . ($type // '') . "' (use i, f or d)")
             unless defined $type && exists $RANK{$type};
         error("argument name '$name' is reserved") if $self->_is_builtin_name($name);
-        push @args, {
+        push @args,
+            {
             name    => $name,
             type    => $type,
             kind    => $rank{$name} ? 'array' : $scalar{$name} ? 'scalar' : 'unused',
             rank    => $rank{$name} // 0,
-            read    => $read{$name} ? 1 : 0,
+            read    => $read{$name}    ? 1 : 0,
             written => $written{$name} ? 1 : 0,
-        };
+            };
     }
     for my $name (sort keys %rank) {
         error("array \$$name is not an argument (kernels cannot declare arrays)") unless $seen{$name};
     }
     $self->{args} = \@args;
+    return;
 }
 
 sub _is_builtin_name ($self, $name) {
@@ -155,6 +166,7 @@ sub _resolve ($self) {
     $self->{loops}  = [];
     $self->_resolve_block($self->{ast});
     delete @{$self}{qw(scopes loops)};
+    return;
 }
 
 sub _lookup ($self, $name, $node) {
@@ -178,6 +190,7 @@ sub _resolve_block ($self, $block, $bare = 0) {
     $self->_resolve_stmt($_) for @{ $block->{body} };
     pop @{ $self->{loops} } if $bare;
     pop @{ $self->{scopes} };
+    return;
 }
 
 sub _resolve_stmt ($self, $s) {
@@ -221,18 +234,20 @@ sub _resolve_stmt ($self, $s) {
     }
     elsif ($t eq 'last' || $t eq 'next') {
         my $loop = $self->{loops}[-1];
-        error("'$t' outside of a loop is not supported", $s) unless $loop;
+        error("'$t' outside of a loop is not supported",   $s) unless $loop;
         error("'$t' inside a bare block is not supported", $s) if $loop eq 'bare';
     }
     elsif ($t ne 'return') {    # return ends the current thread
         error("unsupported statement '$t'", $s);
     }
+    return;
 }
 
 sub _resolve_loop_body ($self, $body) {
     push @{ $self->{loops} }, 'loop';
     $self->_resolve_block($body);
     pop @{ $self->{loops} };
+    return;
 }
 
 sub _resolve_expr ($self, $e) {
@@ -268,24 +283,29 @@ sub _resolve_expr ($self, $e) {
     elsif ($t ne 'num') {
         error("unsupported expression '$t'");
     }
+    return;
 }
 
 # ---- type inference: a local is int unless a float/double value is ever assigned to it ----
 
 sub _infer ($self) {
     my @assigns;
-    walk($self->{ast}, sub ($n) {
-        if ($n->{t} eq 'my' && $n->{init}) {
-            push @assigns, [ $n->{sym}, $n->{init} ];
+    walk(
+        $self->{ast},
+        sub ($n) {
+            if ($n->{t} eq 'my' && $n->{init}) {
+                push @assigns, [ $n->{sym}, $n->{init} ];
+            }
+            elsif ($n->{t} eq 'assign' && $n->{lhs}{t} eq 'var') {
+                my $op = $n->{op} =~ s/=\z//r;
+                my $rhs =
+                      $op eq '' || $op eq '&&' || $op eq '||'
+                    ? $n->{rhs}
+                    : { t => 'bin', op => $op, l => $n->{lhs}, r => $n->{rhs} };
+                push @assigns, [ $n->{lhs}{sym}, $rhs ];
+            }
         }
-        elsif ($n->{t} eq 'assign' && $n->{lhs}{t} eq 'var') {
-            my $op  = $n->{op} =~ s/=\z//r;
-            my $rhs = $op eq '' || $op eq '&&' || $op eq '||'
-                ? $n->{rhs}
-                : { t => 'bin', op => $op, l => $n->{lhs}, r => $n->{rhs} };
-            push @assigns, [ $n->{lhs}{sym}, $rhs ];
-        }
-    });
+    );
     my $changed = 1;
     while ($changed) {
         $changed = 0;
@@ -301,27 +321,32 @@ sub _infer ($self) {
     }
 
     # the GPU has no pow() without libdevice
-    walk($self->{ast}, sub ($n) {
-        error("'**' needs an integer exponent")
-            if $n->{t} eq 'bin' && $n->{op} eq '**' && $self->type_of($n->{r}) ne 'i';
-    });
+    walk(
+        $self->{ast},
+        sub ($n) {
+            error("'**' needs an integer exponent")
+                if $n->{t} eq 'bin' && $n->{op} eq '**' && $self->type_of($n->{r}) ne 'i';
+        }
+    );
+    return;
 }
 
 sub type_of ($self, $e) {
     my $t = $e->{t};
-    return $e->{float} ? $self->{real} : 'i' if $t eq 'num';
-    return $e->{sym}{type} if $t eq 'var' || $t eq 'elem';
-    return $self->type_of($e->{lhs}) if $t eq 'assign';
-    return $self->type_of($e->{e}) if $t eq 'pre' || $t eq 'post';
+    return $e->{float} ? $self->{real} : 'i'                          if $t eq 'num';
+    return $e->{sym}{type}                                            if $t eq 'var' || $t eq 'elem';
+    return $self->type_of($e->{lhs})                                  if $t eq 'assign';
+    return $self->type_of($e->{e})                                    if $t eq 'pre' || $t eq 'post';
     return type_max($self->type_of($e->{a}), $self->type_of($e->{b})) if $t eq 'cond';
     if ($t eq 'un') {
         return $e->{op} eq '-' ? $self->type_of($e->{e}) : 'i';
     }
     if ($t eq 'call') {
         my $arg = $self->type_of($e->{args}[0]);
-        return $e->{name} eq 'sqrt' ? type_max($self->{real}, $arg)
-             : $e->{name} eq 'abs'  ? $arg
-             :                        'i';
+        return
+              $e->{name} eq 'sqrt' ? type_max($self->{real}, $arg)
+            : $e->{name} eq 'abs'  ? $arg
+            :                        'i';
     }
     if ($t eq 'bin') {
         my ($l, $r) = ($self->type_of($e->{l}), $self->type_of($e->{r}));
@@ -338,7 +363,7 @@ sub type_of ($self, $e) {
     error("cannot infer type of '$t'");
 }
 
-sub nonneg_int_literal ($e) { $e->{t} eq 'num' && !$e->{float} && $e->{value} >= 0 }
+sub nonneg_int_literal ($e) { return $e->{t} eq 'num' && !$e->{float} && $e->{value} >= 0 }
 
 # ---- kernel ABI shared by the C generator and the GPU engine ----
 #

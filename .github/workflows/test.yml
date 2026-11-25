@@ -1,0 +1,71 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    # Formatting, Perl::Critic, workflow syntax and leaked secrets (author/lint.sh).
+    runs-on: ubuntu-24.04
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      ACTIONLINT_VERSION: 1.7.12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # gitleaks scans the whole history
+
+      - uses: shogo82148/actions-setup-perl@eebc5c886de14ebbfcd2493d49a12007d2c30477 # v1.44.5
+        with:
+          perl-version: "5.44"
+
+      - name: Install perltidy and perlcritic
+        run: cpanm --notest Perl::Tidy@20260826 Perl::Critic@1.156
+
+      - name: Install gitleaks and actionlint (checksum-verified)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+          base=https://github.com
+          curl -sSfLO "$base/gitleaks/gitleaks/releases/download/v$GITLEAKS_VERSION/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfLO "$base/gitleaks/gitleaks/releases/download/v$GITLEAKS_VERSION/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          curl -sSfLO "$base/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -sSfLO "$base/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          sha256sum --ignore-missing -c "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          sha256sum --ignore-missing -c "actionlint_${ACTIONLINT_VERSION}_checksums.txt"
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -C bin gitleaks
+          tar -xzf "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -C bin actionlint
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - run: author/lint.sh
+
+  test:
+    # GitHub-hosted runners have no GPU and CUDA::DriverAPI is optional, so CI
+    # runs the perl engine only; GPU tests skip themselves.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        perl: ["5.40", "5.42", "5.44"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: shogo82148/actions-setup-perl@eebc5c886de14ebbfcd2493d49a12007d2c30477 # v1.44.5
+        with:
+          perl-version: ${{ matrix.perl }}
+          install-modules-with: cpanm
+
+      - run: prove -l t/
+
+      # Author and release tests (POD, spelling, minimum version, Perl::Critic,
+      # examples) once, on the latest Perl.
+      - name: Install develop dependencies
+        if: matrix.perl == '5.44'
+        run: cpanm --notest --installdeps --with-develop .
+      - name: Run author and release tests
+        if: matrix.perl == '5.44'
+        run: minil test --release

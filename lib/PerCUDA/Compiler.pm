@@ -1,8 +1,8 @@
 package PerCUDA::Compiler;
 use v5.40;
-use Carp ();
+use Carp        ();
 use Digest::MD5 qw(md5_hex);
-use File::Path qw(make_path);
+use File::Path  qw(make_path);
 use File::Spec;
 use File::Temp ();
 
@@ -12,9 +12,10 @@ use File::Temp ();
 
 sub new ($class, %args) {
     my $context = $args{context} // Carp::croak("context is required");
-    my $self = bless {
+    my $self    = bless {
         context   => $context,
         cache_dir => $args{cache_dir} // $ENV{PERCUDA_CACHE_DIR} // default_cache_dir(),
+
         # no fused multiply-add, so that every operation rounds like the perl engine
         options => ['--fmad=false'],
     }, $class;
@@ -35,12 +36,17 @@ sub cache_path ($self, $source) {
 # Returns ($program, $from_cache). The driver loads images lazily, so a broken
 # cache entry only shows up on the first run; callers then use compile().
 sub program ($self, $source) {
-    my $path = $self->cache_path($source);
-    if (-s $path && open my $fh, '<:raw', $path) {
-        my $image = do { local $/; <$fh> };
-        return ($self->{context}->load($image), 1) if length $image;
-    }
-    return ($self->compile($source), 0);
+    my $image = _slurp($self->cache_path($source));
+    return ($self->{context}->load($image), 1) if length $image;
+    return ($self->compile($source),        0);
+}
+
+# Contents of a file, or '' when it cannot be read.
+sub _slurp ($path) {
+    open my $fh, '<:raw', $path or return '';
+    my $content = do { local $/; <$fh> };
+    close $fh;
+    return $content // '';
 }
 
 # Compiles with NVRTC and replaces the cache entry.

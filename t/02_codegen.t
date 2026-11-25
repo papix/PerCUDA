@@ -1,5 +1,5 @@
 use v5.40;
-use Test::More;
+use Test2::V0;
 use PerCUDA;
 
 my $runner = PerCUDA->new(
@@ -21,12 +21,13 @@ K
 
 subtest 'CUDA' => sub {
     my $c = $runner->cuda_source;
-    like $c, qr/extern "C" __global__ void percuda_kernel\(const float \*__restrict__ v_a, int \*__restrict__ v_out, int v_n, int percuda_size_x, int percuda_size_y, int d_a_1, int d_out_1\)/,
+    like $c,
+        qr/extern "C" __global__ void percuda_kernel\(const float \*__restrict__ v_a, int \*__restrict__ v_out, int v_n, int percuda_size_x, int percuda_size_y, int d_a_1, int d_out_1\)/,
         'signature: read-only arrays are const, scalars and sizes by value';
-    like $c, qr/\bint l\d+_i = 0;/, 'int local stays int';
-    like $c, qr/\bfloat l\d+_f = /, 'local assigned a float becomes float';
-    like $c, qr/\bfloat l\d+_q = /, 'division yields float';
-    like $c, qr/v_a\[\(percuda_x\) \* d_a_1 \+ \(percuda_y\)\]/, 'row-major flattening';
+    like $c, qr/\bint l\d+_i = 0;/,                                           'int local stays int';
+    like $c, qr/\bfloat l\d+_f = /,                                           'local assigned a float becomes float';
+    like $c, qr/\bfloat l\d+_q = /,                                           'division yields float';
+    like $c, qr/v_a\[\(percuda_x\) \* d_a_1 \+ \(percuda_y\)\]/,              'row-major flattening';
     like $c, qr/int percuda_y = blockIdx\.x \* blockDim\.x \+ threadIdx\.x;/, 'last axis runs along CUDA x (coalesced)';
     like $c, qr/if \(percuda_x >= percuda_size_x \|\| percuda_y >= percuda_size_y\) return;/, 'bounds guard';
 };
@@ -34,7 +35,7 @@ subtest 'CUDA' => sub {
 subtest 'Perl' => sub {
     my $perl = $runner->perl_source;
     like $perl, qr/for my \$l\d+_k \(0 \.\. .*\$v_n - 1.* - 1\) \{/, 'counting loop becomes a range';
-    like $perl, qr/for \(; \(\$l\d+_j < \$v_n\); /, 'loop that assigns its counter stays C style';
+    like $perl, qr/for \(; \(\$l\d+_j < \$v_n\); /,                  'loop that assigns its counter stays C style';
 };
 
 done_testing;

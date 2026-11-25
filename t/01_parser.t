@@ -1,5 +1,5 @@
 use v5.40;
-use Test::More;
+use Test2::V0;
 use PerCUDA;
 
 sub build ($source, %args) {
@@ -28,7 +28,7 @@ K
 };
 
 my @errors = (
-    [ '$a->[$x] = "str";',             qr/string literals are not supported/ ],
+    [ '$a->[$x] = "str";',              qr/string literals are not supported/ ],
     [ '$a->[$x] = $undeclared;',        qr/\$undeclared is not declared/ ],
     [ 'my @list;',                      qr/unsupported character .@./ ],
     [ 'my %h;',                         qr/unsupported character|only scalar/ ],
@@ -37,7 +37,7 @@ my @errors = (
     [ 'for my $i (0..3) { { last; } }', qr/'last' inside a bare block/ ],
     [ '$a->[$x] = $a->[$x][0];',        qr/used with 1 and 2 subscripts/ ],
     [ '$a->[$x] = $b->[0];',            qr/\$b is not an argument/ ],
-    [ q{$a->[$x] = 1; $a = 2;},  qr/must be used with subscripts/ ],
+    [ q{$a->[$x] = 1; $a = 2;},         qr/must be used with subscripts/ ],
     [ '$a->[$x] = (',                   qr/syntax error/ ],
     [ '$a->[$x] = 1 .. 2;',             qr/range operator/ ],
     [ '$a->[$x][$x][$x][$x] = 1;',      qr/deeper than 3/ ],
@@ -45,17 +45,12 @@ my @errors = (
 );
 for my $case (@errors) {
     my ($src, $re) = @$case;
-    eval { build($src) };
-    like $@, $re, "rejects: $src";
+    like dies { build($src) }, $re, "rejects: $src";
 }
 
-eval { build('$a->[$x] = 1;', argument => [ a => 'q' ]) };
-like $@, qr/unknown type 'q'/, 'rejects unknown type';
-eval { build('$a->[$x] = 1;', argument => [ x => 'f' ]) };
-like $@, qr/reserved/, 'rejects reserved argument name';
-eval { build('$a->[$x] = $n;', retval => ['n']) };
-like $@, qr/must be an array/, 'retval must be an array';
-eval { build('$a->[$x] = 1;', engine => 'cuda') };
-like $@, qr/engine must be/, 'rejects unknown engine';
+like dies { build('$a->[$x] = 1;',  argument => [ a => 'q' ]) }, qr/unknown type 'q'/, 'rejects unknown type';
+like dies { build('$a->[$x] = 1;',  argument => [ x => 'f' ]) }, qr/reserved/,         'rejects reserved argument name';
+like dies { build('$a->[$x] = $n;', retval   => ['n']) },        qr/must be an array/, 'retval must be an array';
+like dies { build('$a->[$x] = 1;',  engine   => 'cuda') },       qr/engine must be/,   'rejects unknown engine';
 
 done_testing;

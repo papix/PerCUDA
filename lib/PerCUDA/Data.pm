@@ -35,7 +35,7 @@ sub convert_array ($ref, $rank, $type) {
     if ($rank == 1) {
         no warnings 'uninitialized';
         return [ unpack 'f*', pack 'f*', @$ref ] if $type eq 'f';
-        return [ map { int } @$ref ] if $type eq 'i';
+        return [ map { int } @$ref ]             if $type eq 'i';
         return [@$ref];
     }
     return [ map { convert_array($_, $rank - 1, $type) } @$ref ];

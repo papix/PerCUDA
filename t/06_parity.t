@@ -1,5 +1,5 @@
 use v5.40;
-use Test::More;
+use Test2::V0;
 use lib 't/lib';
 use PerCUDATest;
 use PerCUDA;
@@ -41,8 +41,8 @@ subtest 'division by zero gives inf and nan' => sub {
         );
         $result{$engine} = $r->run([ -4 .. 4 ], []);
     }
-    is_deeply $result{perl}, [qw(-2 -Inf -2 -0.5 NaN 1 1 Inf 4)], 'perl';
-    is_deeply $result{gpu}, $result{perl}, 'perl and gpu agree' if $result{gpu};
+    is $result{perl}, [qw(-2 -Inf -2 -0.5 NaN 1 1 Inf 4)], 'perl';
+    is $result{gpu},  $result{perl},                       'perl and gpu agree' if $result{gpu};
 };
 
 subtest 'perl_mode => fast' => sub {
@@ -58,8 +58,7 @@ subtest 'perl_mode => fast' => sub {
     unlike $fast->perl_source, qr/pack\('f'/, 'fast does not';
     my ($c, $f) = ($compat->run([ 1 .. 8 ], []), $fast->run([ 1 .. 8 ], []));
     ok !grep({ abs($c->[$_] - $f->[$_]) > 1e-5 * abs $c->[$_] } 0 .. 7), 'results are close';
-    eval { PerCUDA->new(%args, perl_mode => 'slow') };
-    like $@, qr/perl_mode must be/, 'rejects unknown perl_mode';
+    like dies { PerCUDA->new(%args, perl_mode => 'slow') }, qr/perl_mode must be/, 'rejects unknown perl_mode';
 };
 
 for my $name (sort keys %CASE) {
@@ -75,7 +74,7 @@ for my $name (sort keys %CASE) {
             $result{$engine} = $r->run([ -40 .. 40 ], []);
         }
         ok !grep({ $_ != int $_ } @{ $result{perl} }), 'perl results are integers';
-        is_deeply $result{gpu}, $result{perl}, 'perl and gpu agree exactly' if $result{gpu};
+        is $result{gpu}, $result{perl}, 'perl and gpu agree exactly' if $result{gpu};
     };
 }
 
@@ -88,9 +87,9 @@ subtest 'arrays outside retval are not modified' => sub {
             source   => '$tmp->[$x] = $in->[$x] * 2; $out->[$x] = $tmp->[$x] + 1 + $unused->[$x];',
         );
         my ($in, $tmp, $unused) = ([ 1 .. 4 ], [ (9) x 4 ], []);
-        is_deeply scalar $r->run($in, $tmp, $unused, []), [ 3, 5, 7, 9 ], "$engine: result";
-        is_deeply $tmp, [ (9) x 4 ], "$engine: written non-retval array is unchanged";
-        is_deeply $unused, [], "$engine: empty input array is unchanged";
+        is scalar $r->run($in, $tmp, $unused, []), [ 3, 5, 7, 9 ], "$engine: result";
+        is $tmp,                                   [ (9) x 4 ],    "$engine: written non-retval array is unchanged";
+        is $unused,                                [],             "$engine: empty input array is unchanged";
     }
 };
 
@@ -103,7 +102,7 @@ subtest 'empty output is zero filled' => sub {
             retval   => ['out'],
             source   => '$out->[$x] = 1 if $x % 2;',
         );
-        is_deeply scalar $r->run([ 1 .. 4 ], []), [ 0, 1, 0, 1 ], $engine;
+        is scalar $r->run([ 1 .. 4 ], []), [ 0, 1, 0, 1 ], $engine;
     }
 };
 
@@ -129,13 +128,18 @@ K
     }
     my $perl = $result{perl}{double};
     if (my $gpu = $result{gpu}) {
-        my $max_err = sub ($got) { my $m = 0; $m = abs($got->[$_] - $perl->[$_]) > $m ? abs($got->[$_] - $perl->[$_]) : $m for 0 .. 7; $m };
-        is_deeply $gpu->{single}, $result{perl}{single}, 'single: perl and gpu agree exactly';
-        is_deeply $gpu->{double}, $result{perl}{double}, 'double: perl and gpu agree exactly';
+        my $max_err = sub ($got) {
+            my $m = 0;
+            $m = abs($got->[$_] - $perl->[$_]) > $m ? abs($got->[$_] - $perl->[$_]) : $m for 0 .. 7;
+            $m;
+        };
+        is $gpu->{single}, $result{perl}{single}, 'single: perl and gpu agree exactly';
+        is $gpu->{double}, $result{perl}{double}, 'double: perl and gpu agree exactly';
         cmp_ok $max_err->($gpu->{single}), '>', 1e-6, 'single drifts from double';
     }
-    eval { PerCUDA->new(engine => 'perl', precision => 'half', argument => [ a => 'f' ], source => '$a->[$x] = 1;') };
-    like $@, qr/precision must be/, 'rejects unknown precision';
+    like dies {
+        PerCUDA->new(engine => 'perl', precision => 'half', argument => [ a => 'f' ], source => '$a->[$x] = 1;')
+    }, qr/precision must be/, 'rejects unknown precision';
 };
 
 done_testing;

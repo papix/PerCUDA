@@ -37,7 +37,7 @@ static __device__ inline double percuda_powi_d(double x, int n) {
 static __device__ inline int percuda_abs_i(int x) { return x < 0 ? -x : x; }
 C
 
-sub new ($class, $analyzer) { bless { an => $analyzer }, $class }
+sub new ($class, $analyzer) { return bless { an => $analyzer }, $class }
 
 sub generate ($self) {
     my $an   = $self->{an};
@@ -71,7 +71,7 @@ sub generate ($self) {
     return "$PRELUDE\nextern \"C\" __global__ void $KERNEL_NAME(" . join(', ', @params) . ") {\n$prologue$body}\n";
 }
 
-sub _ind ($level) { '    ' x $level }
+sub _ind ($level) { return '    ' x $level }
 
 sub _block ($self, $block, $level) {
     my $inner = join '', map { $self->_stmt($_, $level + 1) } @{ $block->{body} };
@@ -86,11 +86,11 @@ sub _stmt ($self, $s, $level) {
         my $init = $s->{init} ? $self->_cast($type, $s->{init}) : '0';
         return "$ind$CTYPE{$type} $s->{sym}{cname} = $init;\n";
     }
-    return $ind . $self->_expr($s->{e}) . ";\n" if $t eq 'expr';
+    return $ind . $self->_expr($s->{e}) . ";\n"    if $t eq 'expr';
     return $ind . $self->_block($s, $level) . "\n" if $t eq 'block';
     if ($t eq 'if') {
         my @parts = map { 'if (' . $self->_expr($_->[0]) . ') ' . $self->_block($_->[1], $level) } @{ $s->{conds} };
-        my $out = $ind . join(' else ', @parts);
+        my $out   = $ind . join(' else ', @parts);
         $out .= ' else ' . $self->_block($s->{else}, $level) if $s->{else};
         return "$out\n";
     }
@@ -99,22 +99,30 @@ sub _stmt ($self, $s, $level) {
     }
     if ($t eq 'for') {
         my $init = $s->{init} ? $self->_stmt($s->{init}, $level + 1) : '';
-        my $cond = $s->{cond} ? $self->_expr($s->{cond}) : '1';
-        my $step = $s->{step} ? $self->_expr($s->{step}) : '';
-        return "$ind\{\n$init" . _ind($level + 1) . "for (; $cond; $step) "
-            . $self->_block($s->{body}, $level + 1) . "\n$ind}\n";
+        my $cond = $s->{cond} ? $self->_expr($s->{cond})             : '1';
+        my $step = $s->{step} ? $self->_expr($s->{step})             : '';
+        return
+              "$ind\{\n$init"
+            . _ind($level + 1)
+            . "for (; $cond; $step) "
+            . $self->_block($s->{body}, $level + 1)
+            . "\n$ind}\n";
     }
     if ($t eq 'foreach') {
+
         # Perl evaluates the range once and the loop variable is a copy per iteration
         my $id = $self->{an}->new_id;
         my ($lo, $hi, $it) = ("percuda_lo$id", "percuda_hi$id", "percuda_it$id");
         my ($i1, $i2) = (_ind($level + 1), _ind($level + 2));
-        return "$ind\{\n"
-            . "${i1}int $lo = " . $self->_cast('i', $s->{from}) . ";\n"
-            . "${i1}int $hi = " . $self->_cast('i', $s->{to}) . ";\n"
+        return
+              "$ind\{\n"
+            . "${i1}int $lo = "
+            . $self->_cast('i', $s->{from}) . ";\n"
+            . "${i1}int $hi = "
+            . $self->_cast('i', $s->{to}) . ";\n"
             . "${i1}for (int $it = $lo; $it <= $hi; $it++) {\n"
-            . "${i2}$CTYPE{$s->{sym}{type}} $s->{sym}{cname} = $it;\n"
-            . "$i2" . $self->_block($s->{body}, $level + 2) . "\n"
+            . "${i2}$CTYPE{$s->{sym}{type}} $s->{sym}{cname} = $it;\n" . "$i2"
+            . $self->_block($s->{body}, $level + 2) . "\n"
             . "$i1}\n$ind}\n";
     }
     return "${ind}break;\n"    if $t eq 'last';
@@ -131,14 +139,14 @@ sub _cast ($self, $type, $e) {
 sub _num ($self, $e) {
     return sprintf('%d', $e->{value}) unless $e->{float};
     my $double = $self->{an}->real eq 'd';
-    my $s = sprintf($double ? '%.17g' : '%.9g', $e->{value});
+    my $s      = sprintf($double ? '%.17g' : '%.9g', $e->{value});
     $s .= '.0' unless $s =~ /[.e]/;
     return $double ? $s : "${s}f";
 }
 
 sub _expr ($self, $e) {
     my $t = $e->{t};
-    return $self->_num($e) if $t eq 'num';
+    return $self->_num($e)  if $t eq 'num';
     return $e->{sym}{cname} if $t eq 'var';
     return $self->_elem($e) if $t eq 'elem';
     if ($t eq 'un') {
@@ -150,7 +158,11 @@ sub _expr ($self, $e) {
     return '(' . $self->_expr($e->{e}) . "$e->{op})" if $t eq 'post';
     if ($t eq 'cond') {
         my $type = $self->{an}->type_of($e);
-        return '(' . $self->_expr($e->{c}) . ' ? ' . $self->_cast($type, $e->{a}) . ' : ' . $self->_cast($type, $e->{b}) . ')';
+        return
+              '('
+            . $self->_expr($e->{c}) . ' ? '
+            . $self->_cast($type, $e->{a}) . ' : '
+            . $self->_cast($type, $e->{b}) . ')';
     }
     return $self->_assign($e) if $t eq 'assign';
     return $self->_call($e)   if $t eq 'call';
@@ -174,7 +186,7 @@ sub _assign ($self, $e) {
     my $lhs  = $self->_expr($e->{lhs});
     my $type = $self->{an}->type_of($e->{lhs});
     my $op   = $e->{op};
-    return "($lhs = " . $self->_cast($type, $e->{rhs}) . ')' if $op eq '=';
+    return "($lhs = " . $self->_cast($type, $e->{rhs}) . ')'                 if $op eq '=';
     return "($lhs ? $lhs : ($lhs = " . $self->_cast($type, $e->{rhs}) . '))' if $op eq '||=';
     return "($lhs ? ($lhs = " . $self->_cast($type, $e->{rhs}) . ") : $lhs)" if $op eq '&&=';
     my $bin = { t => 'bin', op => ($op =~ s/=\z//r), l => $e->{lhs}, r => $e->{rhs} };
@@ -212,6 +224,7 @@ sub _bin ($self, $e) {
         return '(' . $self->_cast('i', $l) . " $op " . $self->_cast('i', $r) . ')';
     }
     if (($op eq '||' || $op eq '&&') && is_pure($e)) {
+
         # Perl returns the deciding operand, not a boolean
         my ($lc, $lt, $rt) = ($self->_expr($l), $self->_cast($type, $l), $self->_cast($type, $r));
         return $op eq '||' ? "($lc ? $lt : $rt)" : "($lc ? $rt : $lt)";

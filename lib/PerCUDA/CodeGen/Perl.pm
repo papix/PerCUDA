@@ -1,6 +1,6 @@
 package PerCUDA::CodeGen::Perl;
 use v5.40;
-use Scalar::Util qw(refaddr);
+use Scalar::Util      qw(refaddr);
 use PerCUDA::Analyzer qw(is_pure assigned_symbols walk error);
 
 # Emits the kernel as a Perl function for the perl engine. It loops over every
@@ -30,7 +30,7 @@ sub generate ($self) {
     my $out = "sub {\n    my (" . join(', ', @params) . ") = \@_;\n";
     for my $arg (grep { $_->{kind} eq 'scalar' } @{ $an->args }) {
         my $value = "\$p_$arg->{name}";
-        $value = "int($value)" if $arg->{type} eq 'i';
+        $value = "int($value)"              if $arg->{type} eq 'i';
         $value = $self->_round('f', $value) if $arg->{type} eq 'f';
         $out .= "    my \$v_$arg->{name} = $value;\n";
     }
@@ -44,7 +44,7 @@ sub generate ($self) {
     return $out . "    return;\n}\n";
 }
 
-sub _ind ($level) { '    ' x $level }
+sub _ind ($level) { return '    ' x $level }
 
 sub _block ($self, $block, $level) {
     my $inner = join '', map { $self->_stmt($_, $level + 1) } @{ $block->{body} };
@@ -58,11 +58,11 @@ sub _stmt ($self, $s, $level) {
         my $init = $s->{init} ? $self->_cast($s->{sym}{type}, $s->{init}) : '0';
         return "${ind}my \$$s->{sym}{cname} = $init;\n";
     }
-    return $ind . $self->_void($s->{e}) . ";\n" if $t eq 'expr';
+    return $ind . $self->_void($s->{e}) . ";\n"    if $t eq 'expr';
     return $ind . $self->_block($s, $level) . "\n" if $t eq 'block';
     if ($t eq 'if') {
         my @parts = map { '(' . $self->_bool($_->[0]) . ') ' . $self->_block($_->[1], $level) } @{ $s->{conds} };
-        my $out = "${ind}if " . join(' elsif ', @parts);
+        my $out   = "${ind}if " . join(' elsif ', @parts);
         $out .= ' else ' . $self->_block($s->{else}, $level) if $s->{else};
         return "$out\n";
     }
@@ -74,13 +74,20 @@ sub _stmt ($self, $s, $level) {
             return "${ind}for my \$$s->{init}{sym}{cname} ($range) " . $self->_block($s->{body}, $level) . "\n";
         }
         my $init = $s->{init} ? $self->_stmt($s->{init}, $level + 1) : '';
-        my $cond = $s->{cond} ? $self->_bool($s->{cond}) : '';
-        my $step = $s->{step} ? $self->_void($s->{step}) : '';
-        return "$ind\{\n$init" . _ind($level + 1) . "for (; $cond; $step) "
-            . $self->_block($s->{body}, $level + 1) . "\n$ind}\n";
+        my $cond = $s->{cond} ? $self->_bool($s->{cond})             : '';
+        my $step = $s->{step} ? $self->_void($s->{step})             : '';
+        return
+              "$ind\{\n$init"
+            . _ind($level + 1)
+            . "for (; $cond; $step) "
+            . $self->_block($s->{body}, $level + 1)
+            . "\n$ind}\n";
     }
     if ($t eq 'foreach') {
-        return "${ind}for my \$$s->{sym}{cname} (" . $self->_expr($s->{from}) . ' .. ' . $self->_expr($s->{to}) . ') '
+        return
+              "${ind}for my \$$s->{sym}{cname} ("
+            . $self->_expr($s->{from}) . ' .. '
+            . $self->_expr($s->{to}) . ') '
             . $self->_block($s->{body}, $level) . "\n";
     }
     return "${ind}last;\n"                if $t eq 'last';
@@ -94,27 +101,33 @@ sub _stmt ($self, $s, $level) {
 # body does not assign $i, and B is made of variables the loop never assigns.
 sub _counting_loop ($self, $s) {
     my ($init, $cond, $step) = @$s{qw(init cond step)};
-    return undef unless $init && $init->{t} eq 'my' && $init->{init} && $cond && $step;
+    return unless $init && $init->{t} eq 'my' && $init->{init} && $cond && $step;
     my $sym = $init->{sym};
     my $an  = $self->{an};
-    return undef unless $sym->{type} eq 'i';
-    return undef unless $cond->{t} eq 'bin' && ($cond->{op} eq '<' || $cond->{op} eq '<=');
-    return undef unless $cond->{l}{t} eq 'var' && $cond->{l}{sym} == $sym;
-    my $is_inc = ($step->{t} eq 'pre' || $step->{t} eq 'post') && $step->{op} eq '++'
-        && $step->{e}{t} eq 'var' && $step->{e}{sym} == $sym;
-    return undef unless $is_inc;
+    return unless $sym->{type} eq 'i';
+    return unless $cond->{t} eq 'bin'    && ($cond->{op} eq '<' || $cond->{op} eq '<=');
+    return unless $cond->{l}{t} eq 'var' && $cond->{l}{sym} == $sym;
+    my $is_inc =
+           ($step->{t} eq 'pre' || $step->{t} eq 'post')
+        && $step->{op} eq '++'
+        && $step->{e}{t} eq 'var'
+        && $step->{e}{sym} == $sym;
+    return unless $is_inc;
 
     my $limit = $cond->{r};
-    return undef unless $an->type_of($limit) eq 'i' && $an->type_of($init->{init}) eq 'i';
+    return unless $an->type_of($limit) eq 'i' && $an->type_of($init->{init}) eq 'i';
     my $simple = 1;
     my @vars;
-    walk($limit, sub ($n) {
-        if    ($n->{t} eq 'var') { push @vars, $n->{sym} }
-        elsif ($n->{t} ne 'num' && !($n->{t} eq 'bin' && $n->{op} =~ /\A[-+*]\z/)) { $simple = 0 }
-    });
-    return undef unless $simple;
+    walk(
+        $limit,
+        sub ($n) {
+            if    ($n->{t} eq 'var')                                                   { push @vars, $n->{sym} }
+            elsif ($n->{t} ne 'num' && !($n->{t} eq 'bin' && $n->{op} =~ /\A[-+*]\z/)) { $simple = 0 }
+        }
+    );
+    return unless $simple;
     my $assigned = assigned_symbols($s->{body});
-    return undef if grep { $assigned->{ refaddr $_ } } $sym, @vars;
+    return if grep { $assigned->{ refaddr $_ } } $sym, @vars;
 
     my $hi = $self->_expr($limit);
     $hi = "$hi - 1" if $cond->{op} eq '<';
@@ -130,7 +143,7 @@ sub _void ($self, $e) {
 sub _cast ($self, $type, $e) {
     my $code = $self->_expr($e);
     my $from = $self->{an}->type_of($e);
-    return $code if $from eq $type;
+    return $code        if $from eq $type;
     return "int($code)" if $type eq 'i';
     return $self->_round($type, $code);
 }
@@ -138,7 +151,7 @@ sub _cast ($self, $type, $e) {
 sub _num ($self, $e) {
     return sprintf('%d', $e->{value}) unless $e->{float};
     my $value = $self->{exact} && $self->{an}->real eq 'f' ? unpack('f', pack('f', $e->{value})) : $e->{value};
-    my $s = sprintf('%.17g', $value);
+    my $s     = sprintf('%.17g', $value);
     return $s =~ /[.e]/ ? $s : "$s.0";
 }
 
@@ -158,7 +171,7 @@ sub _bool ($self, $e) {
 sub _expr ($self, $e) {
     my $an = $self->{an};
     my $t  = $e->{t};
-    return $self->_num($e) if $t eq 'num';
+    return $self->_num($e)      if $t eq 'num';
     return "\$$e->{sym}{cname}" if $t eq 'var';
     if ($t eq 'elem') {
         return "\$v_$e->{name}" . join('', map { '->[' . $self->_expr($_) . ']' } @{ $e->{idx} });
@@ -166,7 +179,7 @@ sub _expr ($self, $e) {
     if ($t eq 'un') {
         my $inner = $self->_expr($e->{e});
         return $self->_round($an->type_of($e) eq 'i' ? 'i' : 'd', "(-$inner)") if $e->{op} eq '-';
-        return '(' . $self->_bool($e->{e}) . ' ? 0 : 1)' if $e->{op} eq '!';
+        return '(' . $self->_bool($e->{e}) . ' ? 0 : 1)'                       if $e->{op} eq '!';
         return "PerCUDA::Runtime::bnot($inner)";
     }
     if ($t eq 'pre' || $t eq 'post') {
@@ -179,14 +192,18 @@ sub _expr ($self, $e) {
     }
     if ($t eq 'cond') {
         my $type = $an->type_of($e);
-        return '(' . $self->_bool($e->{c}) . ' ? ' . $self->_cast($type, $e->{a}) . ' : ' . $self->_cast($type, $e->{b}) . ')';
+        return
+              '('
+            . $self->_bool($e->{c}) . ' ? '
+            . $self->_cast($type, $e->{a}) . ' : '
+            . $self->_cast($type, $e->{b}) . ')';
     }
     if ($t eq 'assign') {
         my $lhs  = $self->_expr($e->{lhs});
         my $type = $an->type_of($e->{lhs});
         my $op   = $e->{op};
         return "($lhs $op " . $self->_cast($type, $e->{rhs}) . ')' if $op eq '=' || $op eq '||=' || $op eq '&&=';
-        my $rtype = $an->type_of($e->{rhs});
+        my $rtype  = $an->type_of($e->{rhs});
         my $native = $type eq 'd' || (!$self->{exact} && ($type eq 'f' || $rtype eq 'i'));
         if (($op eq '+=' || $op eq '-=' || $op eq '*=') && $native) {
             return "($lhs $op " . $self->_expr($e->{rhs}) . ')';
@@ -206,6 +223,7 @@ sub _expr ($self, $e) {
         return '(' . $self->_bool($e) . ' ? 1 : 0)' if $CMP{$op};
         if ($op eq '||' || $op eq '&&') {
             return '(' . $self->_bool($e) . ' ? 1 : 0)' unless is_pure($e);
+
             # the deciding operand, converted to the type of the expression as on the GPU
             my ($lc, $lt, $rt) = ($self->_expr($e->{l}), $self->_cast($type, $e->{l}), $self->_cast($type, $e->{r}));
             return $op eq '||' ? "($lc ? $lt : $rt)" : "($lc ? $rt : $lt)";
@@ -214,9 +232,11 @@ sub _expr ($self, $e) {
             return "PerCUDA::Runtime::$BITOP{$op}(" . $self->_expr($e->{l}) . ', ' . $self->_expr($e->{r}) . ')';
         }
         if ($op eq '**') {
+
             # repeated multiplication in the same order as the GPU's percuda_powi_*
             return "PerCUDA::Runtime::powi_$type(" . $self->_cast($type, $e->{l}) . ', ' . $self->_expr($e->{r}) . ')';
         }
+
         # division and modulus by zero give inf/nan and 0 as on the GPU, instead of dying
         if ($op eq '%') {
             my ($l, $r) = ($self->_expr($e->{l}), $self->_expr($e->{r}));
@@ -226,8 +246,10 @@ sub _expr ($self, $e) {
         }
         my ($l, $r) = ($self->_cast($type, $e->{l}), $self->_cast($type, $e->{r}));
         if ($op eq '/') {
-            my $code = is_pure($e->{r}) ? "($r != 0 ? $l / $r : PerCUDA::Runtime::div0($l, $r))"
-                                        : "PerCUDA::Runtime::div($l, $r)";
+            my $code =
+                is_pure($e->{r})
+                ? "($r != 0 ? $l / $r : PerCUDA::Runtime::div0($l, $r))"
+                : "PerCUDA::Runtime::div($l, $r)";
             return $self->_round($type, $code);
         }
         return $self->_round($type, "($l $op $r)");
@@ -241,7 +263,7 @@ sub _expr ($self, $e) {
 # result) and integers wrap around at 32 bits.
 sub _round ($self, $type, $code) {
     return $code unless $self->{exact};
-    return "unpack('f', pack('f', $code))" if $type eq 'f';
+    return "unpack('f', pack('f', $code))"                    if $type eq 'f';
     return "(($code + 2147483648) % 4294967296 - 2147483648)" if $type eq 'i';
     return $code;
 }
