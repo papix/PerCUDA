@@ -1,0 +1,71 @@
+use v5.40;
+use Test::More;
+use lib 't/lib';
+use PerCUDATest;
+use PerCUDA;
+
+# The example of Fig. 2 in the paper, with N passed explicitly.
+my $KERNEL = <<'K';
+my $tmp = 0;
+for (my $i = 0; $i < $N; $i++) {
+    $tmp = $tmp
+        + $array1->[$i]->[$y]
+        * $array2->[$x]->[$i];
+}
+$array3->[$x]->[$y] = $tmp;
+K
+
+sub runner ($engine) {
+    return PerCUDA->new(
+        dim      => 2,
+        size     => 'array1',
+        engine   => $engine,
+        argument => [ array1 => 'f', array2 => 'f', array3 => 'f', N => 'i' ],
+        retval   => ['array3'],
+        source   => $KERNEL,
+    );
+}
+
+sub reference ($a, $b, $n) {
+    my @c;
+    for my $x (0 .. $n - 1) {
+        for my $y (0 .. $n - 1) {
+            my $s = 0;
+            $s += $a->[$_][$y] * $b->[$x][$_] for 0 .. $n - 1;
+            $c[$x][$y] = $s;
+        }
+    }
+    return \@c;
+}
+
+my $array = [ [ 1 .. 3 ], [ 4 .. 6 ], [ 7 .. 9 ] ];
+my $expected = [ [ 30, 36, 42 ], [ 66, 81, 96 ], [ 102, 126, 150 ] ];
+
+for my $engine (both_engines()) {
+    subtest $engine => sub {
+        my $r = runner($engine);
+        is $r->engine, $engine, 'engine';
+        my $out = [];
+        my $retval = $r->run($array, $array, $out, 3);
+        is_deeply $retval, $expected, '3x3 product';
+        is_deeply $out, $expected, 'retval array is updated in place';
+
+        my $n = 64;
+        my $a = [ map { my $i = $_; [ map { ($i * 7 + $_ * 3) % 11 - 5 } 0 .. $n - 1 ] } 0 .. $n - 1 ];
+        my $b = [ map { my $i = $_; [ map { ($i * 5 + $_) % 13 - 6 } 0 .. $n - 1 ] } 0 .. $n - 1 ];
+        is_deeply scalar $r->run($a, $b, [], $n), reference($a, $b, $n), '64x64 product (non-multiple of block size grid)';
+    };
+}
+
+subtest 'argument count is checked' => sub {
+    eval { runner('perl')->run($array, $array, []) };
+    like $@, qr/run expects 4 arguments but got 3/;
+};
+
+SKIP: {
+    skip 'no GPU', 1 unless gpu_available();
+    my $r = runner(undef);
+    is $r->engine, 'gpu', 'engine is auto-detected';
+}
+
+done_testing;

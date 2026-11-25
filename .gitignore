@@ -1,0 +1,10 @@
+/.build/
+/_build/
+/Build
+/blib
+/local/
+MYMETA.*
+/PerCUDA-*
+*.pgm
+*~
+*.swp
