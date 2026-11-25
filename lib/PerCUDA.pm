@@ -20,6 +20,8 @@ sub new ($class, %args) {
 
     my $precision = $args{precision} // 'single';
     Carp::croak("PerCUDA: precision must be 'single' or 'double'") unless $precision =~ /\A(?:single|double)\z/;
+    my $perl_mode = $args{perl_mode} // 'compat';
+    Carp::croak("PerCUDA: perl_mode must be 'compat' or 'fast'") unless $perl_mode =~ /\A(?:compat|fast)\z/;
 
     my $ast = PerCUDA::Parser->new(source => $source)->parse;
     my $an  = PerCUDA::Analyzer->new(ast => $ast, dim => $dim, arguments => \@arguments, precision => $precision);
@@ -41,7 +43,7 @@ sub new ($class, %args) {
     my $engine = $args{engine};
     Carp::croak("PerCUDA: engine must be 'gpu' or 'perl'") if defined $engine && $engine !~ /\A(?:gpu|perl)\z/;
 
-    my $self = bless { analyzer => $an, arguments => \@arguments }, $class;
+    my $self = bless { analyzer => $an, arguments => \@arguments, perl_mode => $perl_mode }, $class;
     my %common = (analyzer => $an, size => $size, retval => $retval);
 
     my $context;
@@ -59,7 +61,7 @@ sub new ($class, %args) {
             precision => $precision,
             cache_dir => $args{cache_dir},
         )
-        : PerCUDA::Engine::Perl->new(%common);
+        : PerCUDA::Engine::Perl->new(%common, mode => $perl_mode);
     return $self;
 }
 
@@ -70,7 +72,8 @@ sub cuda_source ($self) {
 }
 
 sub perl_source ($self) {
-    return $self->{perl_source} //= PerCUDA::CodeGen::Perl->new($self->{analyzer})->generate;
+    return $self->{perl_source}
+        //= PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{perl_mode})->generate;
 }
 
 sub run ($self, @values) {
@@ -158,9 +161,15 @@ first array argument).
 =item C<engine>: C<gpu> or C<perl>. When omitted, the GPU is used if
 L<CUDA::DriverAPI> and a CUDA device are available.
 
-=item C<precision>: C<single> (default) or C<double>. The type of float
-literals and of locals inferred as floating point. C<double> is slower on
-most GPUs but matches the perl engine.
+=item C<precision>: C<single> (default) or C<double>, on both engines. The
+type of float literals and of locals inferred as floating point (C<f> and
+C<d> data keep their declared type). C<single> is faster on the GPU.
+
+=item C<perl_mode>: C<compat> (default) or C<fast>, for the perl engine.
+C<compat> gives exactly the GPU's results (see L</DIFFERENCES BETWEEN ENGINES>)
+but rounding every single precision operation makes it several times slower.
+C<fast> skips single precision rounding and 32-bit integer wrapping, so
+results may differ slightly from the GPU.
 
 =item C<cache_dir>: directory of compiled kernels (C<$ENV{PERCUDA_CACHE_DIR}>,
 default C<~/.cache/percuda>). A broken entry is compiled again on the first
@@ -220,32 +229,39 @@ GPU semantics where Perl would differ:
 
 =over 4
 
+=item * Single precision values (C<f> data and, by default, float locals) are
+rounded to single precision after every operation. The GPU code is compiled
+without fused multiply-add, so floating point results match exactly in both
+precisions.
+
+=item * Integers wrap around at 32 bits.
+
+=item * Division by zero gives inf, -inf or nan, and modulus by zero gives 0.
+
 =item * Comparisons and C<!> yield 0 or 1.
 
 =item * Bit operations work on 32-bit signed integers.
 
-=item * Values stored into C<i> arrays and C<i> scalar arguments are truncated.
+=item * Values are converted like C casts: C<i> data is truncated and C<f>
+data is rounded to single precision, including the arrays passed to C<run>.
 
 =item * Empty arrays are filled with zeros, and only C<retval> arrays are
-changed for the caller (arrays written by the kernel are copied first).
+changed for the caller (other arrays are copied first when needed).
 
 =back
+
+With C<perl_mode =E<gt> 'fast'>, the first two are skipped.
 
 Remaining differences:
 
 =over 4
 
-=item * Floating point: the GPU uses C<float> unless C<precision =E<gt> 'double'>
-or C<d> data is used, while perl always uses doubles. With
-C<precision =E<gt> 'double'> the results normally match exactly.
+=item * Out of range or negative array indices are not checked on the GPU,
+while perl reads 0 (or counts negative indices from the end) and grows the
+array on writes.
 
-=item * Integers are 32 bits on the GPU and 64 bits in perl, so overflow
-differs.
-
-=item * Out of range or negative array indices are not checked on the GPU.
-
-=item * The perl engine dies on division or modulus by zero, which helps
-debugging; the GPU yields inf, nan or 0.
+=item * Perl keeps integral values as integers, so it loses the sign of a
+negative zero (C<0.0 * -1>), and dividing by it gives inf instead of -inf.
 
 =back
 

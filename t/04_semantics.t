@@ -6,7 +6,7 @@ use PerCUDA;
 
 plan skip_all => 'no GPU' unless gpu_available();
 
-# Each kernel runs on both engines and the results must agree.
+# Each kernel runs on both engines and the results must agree exactly.
 my @cases = (
     {
         name => 'int arithmetic, division, modulus with negatives',
@@ -97,11 +97,8 @@ for my $case (@cases) {
             );
             $result{$engine} = $r->run([ map { $_ - 50 } 0 .. $N - 1 ], []);
         }
-        my @bad = grep {
-            my ($p, $g) = ($result{perl}[$_], $result{gpu}[$_]);
-            abs($p - $g) > 1e-4 * (1 + abs $p);
-        } 0 .. $N - 1;
-        is scalar @bad, 0, 'perl and gpu agree'
+        my @bad = grep { $result{perl}[$_] != $result{gpu}[$_] } 0 .. $N - 1;
+        is scalar @bad, 0, 'perl and gpu agree exactly'
             or diag join "\n", map { "[$_] perl=$result{perl}[$_] gpu=$result{gpu}[$_]" } @bad[ 0 .. ($#bad < 4 ? $#bad : 4) ];
     };
 }

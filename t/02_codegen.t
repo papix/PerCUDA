@@ -33,7 +33,7 @@ subtest 'CUDA' => sub {
 
 subtest 'Perl' => sub {
     my $perl = $runner->perl_source;
-    like $perl, qr/for my \$l\d+_k \(0 \.\. \(\$v_n - 1\) - 1\)/, 'counting loop becomes a range';
+    like $perl, qr/for my \$l\d+_k \(0 \.\. .*\$v_n - 1.* - 1\) \{/, 'counting loop becomes a range';
     like $perl, qr/for \(; \(\$l\d+_j < \$v_n\); /, 'loop that assigns its counter stays C style';
 };
 

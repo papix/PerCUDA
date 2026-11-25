@@ -3,7 +3,7 @@ use v5.40;
 use Carp ();
 use Exporter 'import';
 
-our @EXPORT_OK = qw(shape zeros copy_array);
+our @EXPORT_OK = qw(shape zeros copy_array convert_array);
 
 # Dimensions of a rectangular nested array, following the first element down to $rank levels.
 sub shape ($ref, $rank) {
@@ -27,6 +27,18 @@ sub zeros ($dims) {
 sub copy_array ($ref, $rank) {
     return [@$ref] if $rank == 1;
     return [ map { copy_array($_, $rank - 1) } @$ref ];
+}
+
+# Copy of a nested array with every element converted the way the GPU stores
+# it: truncated for i, rounded to single precision for f, as is for d.
+sub convert_array ($ref, $rank, $type) {
+    if ($rank == 1) {
+        no warnings 'uninitialized';
+        return [ unpack 'f*', pack 'f*', @$ref ] if $type eq 'f';
+        return [ map { int } @$ref ] if $type eq 'i';
+        return [@$ref];
+    }
+    return [ map { convert_array($_, $rank - 1, $type) } @$ref ];
 }
 
 1;

@@ -15,8 +15,8 @@ sub new ($class, %args) {
     my $self = bless {
         context   => $context,
         cache_dir => $args{cache_dir} // $ENV{PERCUDA_CACHE_DIR} // default_cache_dir(),
-        # fused multiply-add is faster, but double precision should match perl exactly
-        options => ($args{precision} // 'single') eq 'double' ? ['--fmad=false'] : [],
+        # no fused multiply-add, so that every operation rounds like the perl engine
+        options => ['--fmad=false'],
     }, $class;
     $self->{device} = join '.', $context->compute_capability;
     return $self;

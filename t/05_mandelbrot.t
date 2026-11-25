@@ -6,6 +6,8 @@ use PerCUDA;
 
 plan skip_all => 'no GPU' unless gpu_available();
 
+# The set boundary amplifies any rounding difference, so this checks that
+# both engines round every operation the same way.
 my $KERNEL = <<'K';
 my $cr = -2.0 + 3.0 * $x / $size_x;
 my $ci = -1.5 + 3.0 * $y / $size_y;
@@ -23,41 +25,25 @@ K
 
 my $W = 64;
 my %result;
-for my $engine (qw(perl gpu)) {
-    my $r = PerCUDA->new(
-        dim      => 2,
-        engine   => $engine,
-        argument => [ out => 'i', max => 'i' ],
-        size     => 'out',
-        retval   => ['out'],
-        source   => $KERNEL,
-    );
-    my $grid = [ map { [ (0) x $W ] } 1 .. $W ];
-    $result{$engine} = $r->run($grid, 256);
-}
-
-# float on the GPU vs double in perl: pixels on the set boundary may differ
-my ($same, $total) = (0, 0);
-for my $x (0 .. $W - 1) {
-    for my $y (0 .. $W - 1) {
-        $total++;
-        $same++ if $result{perl}[$x][$y] == $result{gpu}[$x][$y];
+for my $precision (qw(single double)) {
+    for my $engine (qw(perl gpu)) {
+        my $r = PerCUDA->new(
+            dim       => 2,
+            engine    => $engine,
+            precision => $precision,
+            argument  => [ out => 'i', max => 'i' ],
+            size      => 'out',
+            retval    => ['out'],
+            source    => $KERNEL,
+        );
+        $result{$precision}{$engine} = $r->run([ map { [ (0) x $W ] } 1 .. $W ], 256);
     }
+    is_deeply $result{$precision}{gpu}, $result{$precision}{perl}, "$precision: perl and gpu agree on every pixel";
 }
-cmp_ok $same / $total, '>=', 0.97, "perl and gpu agree on $same/$total pixels";
-is $result{gpu}[ $W * 2 / 3 ][ $W / 2 ], 256, 'origin is in the set';
-is $result{gpu}[0][0], 1, 'corner escapes immediately';
 
-my $double = PerCUDA->new(
-    dim       => 2,
-    engine    => 'gpu',
-    precision => 'double',
-    argument  => [ out => 'i', max => 'i' ],
-    size      => 'out',
-    retval    => ['out'],
-    source    => $KERNEL,
-);
-is_deeply scalar $double->run([ map { [ (0) x $W ] } 1 .. $W ], 256), $result{perl},
-    'precision => double matches perl on every pixel';
+my $gpu = $result{single}{gpu};
+is $gpu->[ $W * 2 / 3 ][ $W / 2 ], 256, 'origin is in the set';
+is $gpu->[0][0], 1, 'corner escapes immediately';
+isnt join(',', map { @$_ } @$gpu), join(',', map { @$_ } @{ $result{double}{gpu} }), 'single and double precision differ';
 
 done_testing;

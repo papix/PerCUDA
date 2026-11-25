@@ -59,10 +59,13 @@ kernel (Perl) --parse--> AST --> CUDA C++ --NVRTC--> cubin (cached) --CUDA::Driv
   them in place.
 - With `engine => 'perl'` (or automatically when no GPU is found) the
   kernel runs in the perl interpreter, so scripts can be developed without a GPU.
-  The perl engine follows the GPU semantics (0/1 comparisons, 32-bit bit
-  operations, truncation into int arrays, only `retval` arrays change).
-- The GPU computes in `float` by default; `precision => 'double'` makes it
-  match the perl engine (slower on most GPUs).
+  By default (`perl_mode => 'compat'`) the perl engine follows the GPU
+  semantics (single precision rounding, 32-bit integers, inf/nan on division by
+  zero, 0/1 comparisons, C-like conversions, only `retval` arrays change), so
+  both engines give exactly the same results. `perl_mode => 'fast'` skips the
+  costly rounding and wrapping: several times faster, slightly different.
+- Both engines compute in single precision by default, which is fast on the
+  GPU. `precision => 'double'` switches both to double precision.
 - Compiled kernels are cached in `~/.cache/percuda` (`PERCUDA_CACHE_DIR`).
 - Calling `run` repeatedly with the same output array is faster than a new `[]`.
 

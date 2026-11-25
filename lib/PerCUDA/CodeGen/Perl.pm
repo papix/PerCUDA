@@ -5,13 +5,19 @@ use PerCUDA::Analyzer qw(is_pure assigned_symbols walk error);
 
 # Emits the kernel as a Perl function for the perl engine. It loops over every
 # thread index (Fig. 3(b) of the paper) and follows the GPU semantics where
-# Perl differs: comparisons yield 0/1, bit operations work on 32-bit signed
-# integers and stores into int variables truncate.
+# Perl differs: single precision values are rounded after every operation,
+# integers wrap around at 32 bits, division by zero gives inf/nan, comparisons
+# yield 0/1, bit operations work on 32-bit signed integers, and conversions
+# truncate or round like C casts.
 
 my %BITOP = ('&' => 'band', '|' => 'bor', '^' => 'bxor', '<<' => 'shl', '>>' => 'shr');
 my %CMP   = map { $_ => 1 } qw(== != < > <= >=);
 
-sub new ($class, $analyzer) { bless { an => $analyzer }, $class }
+# mode: 'compat' (default) emulates the GPU exactly; 'fast' skips single
+# precision rounding and 32-bit integer wrapping, which cost the most.
+sub new ($class, $analyzer, %opt) {
+    return bless { an => $analyzer, exact => ($opt{mode} // 'compat') ne 'fast' }, $class;
+}
 
 sub generate ($self) {
     my $an     = $self->{an};
@@ -25,6 +31,7 @@ sub generate ($self) {
     for my $arg (grep { $_->{kind} eq 'scalar' } @{ $an->args }) {
         my $value = "\$p_$arg->{name}";
         $value = "int($value)" if $arg->{type} eq 'i';
+        $value = $self->_round('f', $value) if $arg->{type} eq 'f';
         $out .= "    my \$v_$arg->{name} = $value;\n";
     }
     my $level = 1;
@@ -51,7 +58,7 @@ sub _stmt ($self, $s, $level) {
         my $init = $s->{init} ? $self->_cast($s->{sym}{type}, $s->{init}) : '0';
         return "${ind}my \$$s->{sym}{cname} = $init;\n";
     }
-    return $ind . $self->_expr($s->{e}) . ";\n" if $t eq 'expr';
+    return $ind . $self->_void($s->{e}) . ";\n" if $t eq 'expr';
     return $ind . $self->_block($s, $level) . "\n" if $t eq 'block';
     if ($t eq 'if') {
         my @parts = map { '(' . $self->_bool($_->[0]) . ') ' . $self->_block($_->[1], $level) } @{ $s->{conds} };
@@ -68,7 +75,7 @@ sub _stmt ($self, $s, $level) {
         }
         my $init = $s->{init} ? $self->_stmt($s->{init}, $level + 1) : '';
         my $cond = $s->{cond} ? $self->_bool($s->{cond}) : '';
-        my $step = $s->{step} ? $self->_expr($s->{step}) : '';
+        my $step = $s->{step} ? $self->_void($s->{step}) : '';
         return "$ind\{\n$init" . _ind($level + 1) . "for (; $cond; $step) "
             . $self->_block($s->{body}, $level + 1) . "\n$ind}\n";
     }
@@ -114,14 +121,24 @@ sub _counting_loop ($self, $s) {
     return $self->_expr($init->{init}) . " .. $hi";
 }
 
-sub _cast ($self, $type, $e) {
-    my $code = $self->_expr($e);
-    return $type eq 'i' && $self->{an}->type_of($e) ne 'i' ? "int($code)" : $code;
+# An expression whose value is discarded: $i++ needs no copy of the old value.
+sub _void ($self, $e) {
+    return $self->_expr($e->{t} eq 'post' ? { %$e, t => 'pre' } : $e);
 }
 
-sub _num ($e) {
+# Converts like a C cast: truncation to int, rounding to single precision.
+sub _cast ($self, $type, $e) {
+    my $code = $self->_expr($e);
+    my $from = $self->{an}->type_of($e);
+    return $code if $from eq $type;
+    return "int($code)" if $type eq 'i';
+    return $self->_round($type, $code);
+}
+
+sub _num ($self, $e) {
     return sprintf('%d', $e->{value}) unless $e->{float};
-    my $s = sprintf('%.17g', $e->{value});
+    my $value = $self->{exact} && $self->{an}->real eq 'f' ? unpack('f', pack('f', $e->{value})) : $e->{value};
+    my $s = sprintf('%.17g', $value);
     return $s =~ /[.e]/ ? $s : "$s.0";
 }
 
@@ -139,44 +156,94 @@ sub _bool ($self, $e) {
 }
 
 sub _expr ($self, $e) {
-    my $t = $e->{t};
-    return _num($e) if $t eq 'num';
+    my $an = $self->{an};
+    my $t  = $e->{t};
+    return $self->_num($e) if $t eq 'num';
     return "\$$e->{sym}{cname}" if $t eq 'var';
     if ($t eq 'elem') {
         return "\$v_$e->{name}" . join('', map { '->[' . $self->_expr($_) . ']' } @{ $e->{idx} });
     }
     if ($t eq 'un') {
         my $inner = $self->_expr($e->{e});
-        return "(-$inner)" if $e->{op} eq '-';
+        return $self->_round($an->type_of($e) eq 'i' ? 'i' : 'd', "(-$inner)") if $e->{op} eq '-';
         return '(' . $self->_bool($e->{e}) . ' ? 0 : 1)' if $e->{op} eq '!';
         return "PerCUDA::Runtime::bnot($inner)";
     }
-    return "($e->{op}" . $self->_expr($e->{e}) . ')' if $t eq 'pre';
-    return '(' . $self->_expr($e->{e}) . "$e->{op})" if $t eq 'post';
+    if ($t eq 'pre' || $t eq 'post') {
+        my $var  = $self->_expr($e->{e});
+        my $type = $an->type_of($e->{e});
+        return $t eq 'pre' ? "($e->{op}$var)" : "($var$e->{op})" if $type eq 'd' || !$self->{exact};
+        my $op  = substr $e->{op}, 0, 1;
+        my $new = $self->_round($type, "$var $op 1");
+        return $t eq 'pre' ? "($var = $new)" : "do { my \$percuda_old = $var; $var = $new; \$percuda_old }";
+    }
     if ($t eq 'cond') {
-        return '(' . $self->_bool($e->{c}) . ' ? ' . $self->_expr($e->{a}) . ' : ' . $self->_expr($e->{b}) . ')';
+        my $type = $an->type_of($e);
+        return '(' . $self->_bool($e->{c}) . ' ? ' . $self->_cast($type, $e->{a}) . ' : ' . $self->_cast($type, $e->{b}) . ')';
     }
     if ($t eq 'assign') {
         my $lhs  = $self->_expr($e->{lhs});
-        my $type = $self->{an}->type_of($e->{lhs});
+        my $type = $an->type_of($e->{lhs});
         my $op   = $e->{op};
         return "($lhs $op " . $self->_cast($type, $e->{rhs}) . ')' if $op eq '=' || $op eq '||=' || $op eq '&&=';
-        if (($op eq '+=' || $op eq '-=' || $op eq '*=') && ($type ne 'i' || $self->{an}->type_of($e->{rhs}) eq 'i')) {
+        my $rtype = $an->type_of($e->{rhs});
+        my $native = $type eq 'd' || (!$self->{exact} && ($type eq 'f' || $rtype eq 'i'));
+        if (($op eq '+=' || $op eq '-=' || $op eq '*=') && $native) {
             return "($lhs $op " . $self->_expr($e->{rhs}) . ')';
         }
         my $bin = { t => 'bin', op => ($op =~ s/=\z//r), l => $e->{lhs}, r => $e->{rhs} };
         return "($lhs = " . $self->_cast($type, $bin) . ')';
     }
-    return "$e->{name}(" . $self->_expr($e->{args}[0]) . ')' if $t eq 'call';
+    if ($t eq 'call') {
+        my $type = $an->type_of($e);
+        return 'int(' . $self->_expr($e->{args}[0]) . ')' if $e->{name} eq 'int';
+        return 'abs(' . $self->_expr($e->{args}[0]) . ')' if $e->{name} eq 'abs';
+        return $self->_round($type, 'sqrt(' . $self->_cast($type, $e->{args}[0]) . ')');
+    }
     if ($t eq 'bin') {
-        my $op = $e->{op};
+        my $op   = $e->{op};
+        my $type = $an->type_of($e);
         return '(' . $self->_bool($e) . ' ? 1 : 0)' if $CMP{$op};
-        return '(' . $self->_bool($e) . ' ? 1 : 0)' if ($op eq '||' || $op eq '&&') && !is_pure($e);
-        my ($l, $r) = ($self->_expr($e->{l}), $self->_expr($e->{r}));
-        return "PerCUDA::Runtime::$BITOP{$op}($l, $r)" if $BITOP{$op};
-        return "($l $op $r)";
+        if ($op eq '||' || $op eq '&&') {
+            return '(' . $self->_bool($e) . ' ? 1 : 0)' unless is_pure($e);
+            # the deciding operand, converted to the type of the expression as on the GPU
+            my ($lc, $lt, $rt) = ($self->_expr($e->{l}), $self->_cast($type, $e->{l}), $self->_cast($type, $e->{r}));
+            return $op eq '||' ? "($lc ? $lt : $rt)" : "($lc ? $rt : $lt)";
+        }
+        if ($BITOP{$op}) {
+            return "PerCUDA::Runtime::$BITOP{$op}(" . $self->_expr($e->{l}) . ', ' . $self->_expr($e->{r}) . ')';
+        }
+        if ($op eq '**') {
+            # repeated multiplication in the same order as the GPU's percuda_powi_*
+            return "PerCUDA::Runtime::powi_$type(" . $self->_cast($type, $e->{l}) . ', ' . $self->_expr($e->{r}) . ')';
+        }
+        # division and modulus by zero give inf/nan and 0 as on the GPU, instead of dying
+        if ($op eq '%') {
+            my ($l, $r) = ($self->_expr($e->{l}), $self->_expr($e->{r}));
+            return "PerCUDA::Runtime::mod($l, $r)" unless is_pure($e->{r});
+            my $test = $an->type_of($e->{r}) eq 'i' ? $r : "int($r)";
+            return "($test ? $l % $r : 0)";
+        }
+        my ($l, $r) = ($self->_cast($type, $e->{l}), $self->_cast($type, $e->{r}));
+        if ($op eq '/') {
+            my $code = is_pure($e->{r}) ? "($r != 0 ? $l / $r : PerCUDA::Runtime::div0($l, $r))"
+                                        : "PerCUDA::Runtime::div($l, $r)";
+            return $self->_round($type, $code);
+        }
+        return $self->_round($type, "($l $op $r)");
     }
     error("unsupported expression '$t'");
+}
+
+# Makes the result of an operation of $type what the GPU computes. In compat
+# mode, single precision values are rounded (rounding every float result of
+# + - * / and sqrt computed in double gives exactly the single precision
+# result) and integers wrap around at 32 bits.
+sub _round ($self, $type, $code) {
+    return $code unless $self->{exact};
+    return "unpack('f', pack('f', $code))" if $type eq 'f';
+    return "(($code + 2147483648) % 4294967296 - 2147483648)" if $type eq 'i';
+    return $code;
 }
 
 1;
