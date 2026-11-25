@@ -45,7 +45,7 @@ described in "PerCUDA: CUDA Binding Framework for Perl" (Fukumoto and Ishiura,
 IEICE Technical Report, 2014) and "Perl meets GPU" (Perl Advent Calendar 2013).
 
 ```
-kernel (Perl) --parse--> AST --> C --clang (NVPTX)--> PTX --CUDA::DriverAPI--> GPU
+kernel (Perl) --parse--> AST --> CUDA C++ --NVRTC--> cubin (cached) --CUDA::DriverAPI--> GPU
                           \----> Perl (thread loops, GPU semantics) --> perl interpreter
 ```
 
@@ -57,13 +57,14 @@ kernel (Perl) --parse--> AST --> C --clang (NVPTX)--> PTX --CUDA::DriverAPI--> G
 - `run` takes one value per argument. An empty array reference (`[]`) takes the
   shape of the `size` argument. It returns the `retval` arrays and also updates
   them in place.
-- With `engine => 'perl'` (or automatically when no GPU or clang is found) the
+- With `engine => 'perl'` (or automatically when no GPU is found) the
   kernel runs in the perl interpreter, so scripts can be developed without a GPU.
   The perl engine follows the GPU semantics (0/1 comparisons, 32-bit bit
   operations, truncation into int arrays, only `retval` arrays change).
 - The GPU computes in `float` by default; `precision => 'double'` makes it
   match the perl engine (slower on most GPUs).
-- Compiled PTX is cached in `~/.cache/percuda` (`PERCUDA_CACHE_DIR`).
+- Compiled kernels are cached in `~/.cache/percuda` (`PERCUDA_CACHE_DIR`).
+- Calling `run` repeatedly with the same output array is faster than a new `[]`.
 
 See `perldoc PerCUDA` for the supported kernel syntax and the differences
 between the engines.
@@ -78,14 +79,14 @@ perl examples/mandelbrot.pl [gpu|perl] [width] [max_iterations] > mandelbrot.pgm
 # DEPENDENCIES
 
 - Perl 5.40 or later
-- For the GPU engine: clang with the NVPTX backend and
-  [CUDA::DriverAPI](https://github.com/papix/CUDA-DriverAPI) (Perl 5.40+, CUDA 12+).
-  The default PTX target is `sm_75`; change it with `arch` or `PERCUDA_ARCH`.
+- For the GPU engine: [CUDA::DriverAPI](https://github.com/papix/CUDA-DriverAPI)
+  (Perl 5.40+, CUDA 12+ with NVRTC).
 
 # SETUP
 
 CUDA 12+ support of CUDA::DriverAPI lives on its `fix-modern-cuda` branch
-(`master` does not build with modern CUDA). `.perl-version` pins Perl 5.44.0
+(`master` does not build with modern CUDA). PerCUDA needs its array transfer,
+`fill`, `load` and `compute_capability` (commit 3c863cf or later). `.perl-version` pins Perl 5.44.0
 for plenv. Either use its build output directly:
 
 ```

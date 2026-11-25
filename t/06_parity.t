@@ -80,7 +80,7 @@ K
                 retval    => ['out'],
                 source    => $source,
             );
-            like $r->c_source, $precision eq 'double' ? qr/double l\d+_s/ : qr/float l\d+_s/, "$precision local";
+            like $r->cuda_source, $precision eq 'double' ? qr/double l\d+_s/ : qr/float l\d+_s/, "$precision local";
             $result{$engine}{$precision} = $r->run([ 1 .. 8 ], []);
         }
     }

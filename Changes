@@ -3,6 +3,7 @@ Revision history for Perl extension PerCUDA
 {{$NEXT}}
 
     - Rebuild of the 2013 prototype for Perl 5.40+ and CUDA 12+
-    - Translate kernels written in Perl to C and compile them to PTX with clang (NVPTX)
+    - Translate kernels written in Perl to CUDA C++ and compile them with NVRTC
     - Run kernels on the GPU through CUDA::DriverAPI or in the perl interpreter
-    - Cache compiled PTX
+    - Cache compiled kernels on disk
+    - Perl engine follows the GPU semantics; precision option

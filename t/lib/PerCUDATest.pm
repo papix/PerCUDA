@@ -2,7 +2,6 @@ package PerCUDATest;
 use v5.40;
 use Exporter 'import';
 use File::Temp ();
-use PerCUDA::Compiler;
 use PerCUDA::Engine::GPU;
 
 our @EXPORT = qw(gpu_available both_engines);
@@ -11,7 +10,7 @@ my $CACHE = File::Temp->newdir;
 $ENV{PERCUDA_CACHE_DIR} = "$CACHE";
 
 sub gpu_available () {
-    state $ok = PerCUDA::Compiler->new->available && PerCUDA::Engine::GPU->context_available ? 1 : 0;
+    state $ok = PerCUDA::Engine::GPU->context_available ? 1 : 0;
     return $ok;
 }
 

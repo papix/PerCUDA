@@ -2,8 +2,9 @@ package PerCUDA;
 use v5.40;
 use Carp ();
 use PerCUDA::Parser;
-use PerCUDA::CodeGen;
-use PerCUDA::Compiler;
+use PerCUDA::Analyzer;
+use PerCUDA::CodeGen::CUDA;
+use PerCUDA::CodeGen::Perl;
 use PerCUDA::Engine::Perl;
 use PerCUDA::Engine::GPU;
 
@@ -21,9 +22,8 @@ sub new ($class, %args) {
     Carp::croak("PerCUDA: precision must be 'single' or 'double'") unless $precision =~ /\A(?:single|double)\z/;
 
     my $ast = PerCUDA::Parser->new(source => $source)->parse;
-    my $gen = PerCUDA::CodeGen->new(ast => $ast, dim => $dim, arguments => \@arguments, precision => $precision)
-        ->generate;
-    my %arg = map { $_->{name} => $_ } @{ $gen->{args} };
+    my $an  = PerCUDA::Analyzer->new(ast => $ast, dim => $dim, arguments => \@arguments, precision => $precision);
+    my %arg = map { $_->{name} => $_ } @{ $an->args };
 
     my $retval = $args{retval} // [];
     $retval = [$retval] unless ref $retval;
@@ -33,62 +33,45 @@ sub new ($class, %args) {
             unless $arg{$name}{kind} eq 'array';
     }
 
-    my $size = $args{size} // (map { $_->{name} } grep { $_->{kind} eq 'array' } @{ $gen->{args} })[0]
+    my $size = $args{size} // (map { $_->{name} } grep { $_->{kind} eq 'array' } @{ $an->args })[0]
         // Carp::croak("PerCUDA: 'size' is required when the kernel uses no arrays");
     Carp::croak("PerCUDA: size '$size' is not an argument") unless $arg{$size};
     Carp::croak("PerCUDA: size '$size' must be an array") if $arg{$size}{kind} eq 'scalar';
 
-    my $self = bless {
-        dim         => $dim,
-        size        => $size,
-        retval      => $retval,
-        arguments   => \@arguments,
-        c_source    => $gen->{c},
-        perl_source => $gen->{perl},
-    }, $class;
-
     my $engine = $args{engine};
     Carp::croak("PerCUDA: engine must be 'gpu' or 'perl'") if defined $engine && $engine !~ /\A(?:gpu|perl)\z/;
-    my $compiler = PerCUDA::Compiler->new(map { $_ => $args{$_} } grep { defined $args{$_} } qw(clang arch cache_dir));
+
+    my $self = bless { analyzer => $an, arguments => \@arguments }, $class;
+    my %common = (analyzer => $an, size => $size, retval => $retval);
 
     my $context;
     if (!defined $engine || $engine eq 'gpu') {
-        $context = $compiler->available ? PerCUDA::Engine::GPU->context_available($args{device} // 0) : undef;
-        if (!$context && defined $engine) {
-            Carp::croak($compiler->available
-                ? "PerCUDA: no usable GPU (CUDA::DriverAPI could not create a context)"
-                : "PerCUDA: clang ($compiler->{clang}) was not found");
-        }
-        $engine = $context ? 'gpu' : 'perl';
+        $context = PerCUDA::Engine::GPU->context_available($args{device} // 0);
+        Carp::croak("PerCUDA: no usable GPU (CUDA::DriverAPI could not create a context)")
+            if !$context && defined $engine;
     }
 
-    if ($engine eq 'gpu') {
-        $self->{ptx}    = $compiler->compile($gen->{c});
-        $self->{engine} = PerCUDA::Engine::GPU->new(
-            dim     => $dim,
-            size    => $size,
-            retval  => $retval,
-            args    => $gen->{args},
-            ptx     => $self->{ptx},
-            context => $context,
-        );
-    }
-    else {
-        $self->{engine} = PerCUDA::Engine::Perl->new(
-            dim    => $dim,
-            size   => $size,
-            retval => $retval,
-            args   => $gen->{args},
-            perl   => $gen->{perl},
-        );
-    }
+    $self->{engine} = $context
+        ? PerCUDA::Engine::GPU->new(
+            %common,
+            context   => $context,
+            source    => $self->cuda_source,
+            precision => $precision,
+            cache_dir => $args{cache_dir},
+        )
+        : PerCUDA::Engine::Perl->new(%common);
     return $self;
 }
 
-sub engine      ($self) { $self->{engine}->name }
-sub c_source    ($self) { $self->{c_source} }
-sub perl_source ($self) { $self->{perl_source} }
-sub ptx_path    ($self) { $self->{ptx} }
+sub engine ($self) { $self->{engine}->name }
+
+sub cuda_source ($self) {
+    return $self->{cuda_source} //= PerCUDA::CodeGen::CUDA->new($self->{analyzer})->generate;
+}
+
+sub perl_source ($self) {
+    return $self->{perl_source} //= PerCUDA::CodeGen::Perl->new($self->{analyzer})->generate;
+}
 
 sub run ($self, @values) {
     my $want = @{ $self->{arguments} };
@@ -143,8 +126,8 @@ PerCUDA - GPGPU framework for Perl: write CUDA kernels in Perl
 =head1 DESCRIPTION
 
 PerCUDA lets you write GPU kernels in Perl. The kernel source is translated
-into C, compiled to PTX by clang's NVPTX backend, and launched through
-L<CUDA::DriverAPI>. The same kernel can also run in the perl interpreter, so
+into CUDA C++, compiled with NVRTC for the device's own architecture, and
+launched through L<CUDA::DriverAPI>. Compiled code is cached on disk. The same kernel can also run in the perl interpreter, so
 scripts can be developed and tested on machines without a GPU.
 
 The kernel body runs once per thread. C<$x>, C<$y> and C<$z> hold the thread
@@ -172,17 +155,19 @@ first array argument).
 
 =item C<retval>: array arguments returned by C<run>.
 
-=item C<engine>: C<gpu> or C<perl>. When omitted, the GPU is used if clang and
-a CUDA device are available.
+=item C<engine>: C<gpu> or C<perl>. When omitted, the GPU is used if
+L<CUDA::DriverAPI> and a CUDA device are available.
 
 =item C<precision>: C<single> (default) or C<double>. The type of float
 literals and of locals inferred as floating point. C<double> is slower on
 most GPUs but matches the perl engine.
 
-=item C<arch>, C<clang>, C<cache_dir>, C<device>: PTX target (default
-C<sm_75>, or C<$ENV{PERCUDA_ARCH}>), clang command (C<$ENV{PERCUDA_CLANG}>),
-PTX cache directory (C<$ENV{PERCUDA_CACHE_DIR}>, default
-C<~/.cache/percuda>) and CUDA device ordinal.
+=item C<cache_dir>: directory of compiled kernels (C<$ENV{PERCUDA_CACHE_DIR}>,
+default C<~/.cache/percuda>). A broken entry is compiled again on the first
+run.
+
+=item C<device>: CUDA device ordinal (default 0). Runners on the same device
+share one CUDA context.
 
 =back
 
@@ -194,10 +179,13 @@ the C<size> argument and is filled with zeros. Returns the C<retval> arrays
 (the first one in scalar context). The caller's retval arrays are also updated
 in place.
 
-=item C<< $runner->engine >>, C<< $runner->c_source >>, C<< $runner->perl_source >>, C<< $runner->ptx_path >>
+When calling C<run> repeatedly, passing the same output array every time is
+faster than a new C<[]>: the GPU engine fills it in place, reusing its rows
+and scalars.
 
-The engine in use, the generated C and Perl code, and the path of the
-compiled PTX.
+=item C<< $runner->engine >>, C<< $runner->cuda_source >>, C<< $runner->perl_source >>
+
+The engine in use, and the generated CUDA C++ and Perl code.
 
 =back
 
@@ -263,7 +251,7 @@ debugging; the GPU yields inf, nan or 0.
 
 =head1 DEPENDENCIES
 
-Perl 5.40 or later, clang with the NVPTX backend, and L<CUDA::DriverAPI>
+Perl 5.40 or later, and L<CUDA::DriverAPI> with NVRTC
 (only for the GPU engine).
 
 =head1 LICENSE

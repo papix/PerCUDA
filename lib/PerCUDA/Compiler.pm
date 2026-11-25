@@ -6,15 +6,20 @@ use File::Path qw(make_path);
 use File::Spec;
 use File::Temp ();
 
-# Compiles generated C to PTX with clang's NVPTX backend and caches the result,
-# so an unchanged kernel is compiled only once.
+# Compiles generated CUDA C++ with NVRTC (through CUDA::DriverAPI) for the
+# device's own architecture, and caches the compiled image on disk keyed by
+# the source, the compute capability and the options.
 
 sub new ($class, %args) {
-    return bless {
-        clang     => $args{clang} // $ENV{PERCUDA_CLANG} // 'clang',
-        arch      => $args{arch} // $ENV{PERCUDA_ARCH} // 'sm_75',
+    my $context = $args{context} // Carp::croak("context is required");
+    my $self = bless {
+        context   => $context,
         cache_dir => $args{cache_dir} // $ENV{PERCUDA_CACHE_DIR} // default_cache_dir(),
+        # fused multiply-add is faster, but double precision should match perl exactly
+        options => ($args{precision} // 'single') eq 'double' ? ['--fmad=false'] : [],
     }, $class;
+    $self->{device} = join '.', $context->compute_capability;
+    return $self;
 }
 
 sub default_cache_dir () {
@@ -22,40 +27,37 @@ sub default_cache_dir () {
     return File::Spec->catdir($base, 'percuda');
 }
 
-sub available ($self) {
-    my $clang = $self->{clang};
-    return -x $clang if File::Spec->file_name_is_absolute($clang);
-    for my $dir (File::Spec->path) {
-        return 1 if -x File::Spec->catfile($dir, $clang);
-    }
-    return 0;
+sub cache_path ($self, $source) {
+    my $key = md5_hex(join "\0", $source, $self->{device}, @{ $self->{options} }, $CUDA::DriverAPI::VERSION);
+    return File::Spec->catfile($self->{cache_dir}, "$key.bin");
 }
 
-sub compile ($self, $c_source) {
-    my @flags = ('--target=nvptx64-nvidia-cuda', "-march=$self->{arch}", '-O3', '-ffp-contract=off', '-S');
-    my $key   = md5_hex(join "\0", $c_source, @flags);
-    my $ptx   = File::Spec->catfile($self->{cache_dir}, "$key.ptx");
-    return $ptx if -s $ptx;
-
-    make_path($self->{cache_dir});
-    my $c_file = File::Spec->catfile($self->{cache_dir}, "$key.c");
-    _write($c_file, $c_source);
-
-    my $tmp = File::Temp->new(DIR => $self->{cache_dir}, SUFFIX => '.ptx', UNLINK => 1);
-    close $tmp;
-    my $status = system { $self->{clang} } $self->{clang}, @flags, '-o', $tmp->filename, $c_file;
-    if ($status != 0) {
-        Carp::croak("PerCUDA: clang failed to compile the kernel (exit $status). Generated C: $c_file");
+# Returns ($program, $from_cache). The driver loads images lazily, so a broken
+# cache entry only shows up on the first run; callers then use compile().
+sub program ($self, $source) {
+    my $path = $self->cache_path($source);
+    if (-s $path && open my $fh, '<:raw', $path) {
+        my $image = do { local $/; <$fh> };
+        return ($self->{context}->load($image), 1) if length $image;
     }
-    rename $tmp->filename, $ptx or Carp::croak("PerCUDA: cannot write $ptx: $!");
-    $tmp->unlink_on_destroy(0);
-    return $ptx;
+    return ($self->compile($source), 0);
 }
 
-sub _write ($path, $content) {
-    open my $fh, '>', $path or Carp::croak("PerCUDA: cannot write $path: $!");
-    print {$fh} $content;
-    close $fh or Carp::croak("PerCUDA: cannot write $path: $!");
+# Compiles with NVRTC and replaces the cache entry.
+sub compile ($self, $source) {
+    my $program = $self->{context}->compile($source, name => 'percuda.cu', options => $self->{options});
+    my $path    = $self->cache_path($source);
+    eval {
+        make_path($self->{cache_dir});
+        my $tmp = File::Temp->new(DIR => $self->{cache_dir}, SUFFIX => '.tmp');
+        binmode $tmp;
+        print {$tmp} $program->image;
+        close $tmp or die "close: $!";
+        rename $tmp->filename, $path or die "rename: $!";
+        $tmp->unlink_on_destroy(0);
+        1;
+    } or Carp::carp("PerCUDA: cannot write the kernel cache $path: $@");
+    return $program;
 }
 
 1;

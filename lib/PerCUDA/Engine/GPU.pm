@@ -1,114 +1,115 @@
 package PerCUDA::Engine::GPU;
 use v5.40;
+use parent 'PerCUDA::Engine';
 use Carp ();
-use PerCUDA::CodeGen;
-use PerCUDA::Data qw(shape flatten unflatten);
+use PerCUDA::CodeGen::CUDA;
+use PerCUDA::Compiler;
 
-# Runs the kernel on a GPU: Perl data is packed into binary, copied to the
-# device, the generated PTX is launched through CUDA::DriverAPI, and the
-# return values are copied back and converted to Perl arrays.
+# Runs the kernel on a GPU: the CUDA C++ from PerCUDA::CodeGen::CUDA is
+# compiled with NVRTC (cached on disk), arrays are converted and copied to
+# reused device buffers by CUDA::DriverAPI, scalars are passed by value, and
+# the retval arrays are copied back into the caller's arrays.
 
-my %PACK = (i => 'l', f => 'f', d => 'd');
-my %SIZE = (i => 4, f => 4, d => 8);
-my %BLOCK = (1 => [ 256, 1, 1 ], 2 => [ 16, 16, 1 ], 3 => [ 8, 8, 4 ]);
+my %TYPE  = (i => 'i32', f => 'f32', d => 'f64');
+my %SIZE  = (i => 4,     f => 4,     d => 8);
+my %BLOCK = (1 => [ 256, 1, 1 ], 2 => [ 32, 8, 1 ], 3 => [ 32, 4, 2 ]);    # CUDA x, y, z
 
-sub new ($class, %args) {
-    my $self = bless {%args}, $class;    # dim, size, retval, args, ptx, context
-    return $self;
+sub init ($self) {
+    # context, source, precision, cache_dir
+    $self->{params}   = $self->{analyzer}->kernel_params;
+    $self->{buffers}  = {};    # argument index => CUDA::DriverAPI::Buffer
+    $self->{compiler} = PerCUDA::Compiler->new(
+        context   => $self->{context},
+        precision => $self->{precision},
+        cache_dir => $self->{cache_dir},
+    );
+    @$self{qw(program from_cache)} = $self->{compiler}->program($self->{source});
 }
 
 sub name ($self) { 'gpu' }
 
+# One context per device, shared by every runner for the life of the process:
+# releasing the last reference destroys the primary context, and creating it
+# again costs tens of milliseconds.
+my %CONTEXT;
+
 sub context_available ($class, $device = 0) {
-    return eval {
+    return $CONTEXT{$device} //= eval {
         require CUDA::DriverAPI;
         CUDA::DriverAPI->new(device => $device);
     };
 }
 
+# Device buffer of argument $i, reused while its size does not change.
+sub _buffer ($self, $i, $size) {
+    my $buf = $self->{buffers}{$i};
+    return $buf if $buf && $buf->size == $size;
+    undef $self->{buffers}{$i};    # free the old one first
+    return $self->{buffers}{$i} = $self->{context}->buffer(size => $size);
+}
+
+sub _launch ($self, @launch) {
+    my $ctx = $self->{context};
+    return $ctx->run($self->{program}, @launch) unless $self->{from_cache};
+
+    # The driver loads a cached image on its first use, so a broken cache
+    # entry fails here: compile again and retry once.
+    my $ok = eval { $ctx->run($self->{program}, @launch); 1 };
+    my $err = $@;
+    $self->{from_cache} = 0;
+    return if $ok;
+    die $err unless $err =~ /CUDA_ERROR_(?:INVALID_IMAGE|INVALID_PTX|INVALID_SOURCE|NO_BINARY_FOR_GPU|UNSUPPORTED_PTX_VERSION)/;
+    $self->{program} = $self->{compiler}->compile($self->{source});
+    $ctx->run($self->{program}, @launch);
+}
+
 sub run ($self, @values) {
-    my $ctx  = $self->{context};
-    my @args = @{ $self->{args} };
-    my %index = map { $args[$_]{name} => $_ } 0 .. $#args;
-    my %is_retval = map { $_ => 1 } @{ $self->{retval} };
+    my $layout = $self->layout(\@values);
+    my $grid   = $layout->{grid};
 
-    my $size_arg  = $args[ $index{ $self->{size} } ];
-    my $size_rank = $size_arg->{rank} || $self->{dim};
-    my $size_dims = shape($values[ $index{ $self->{size} } ], $size_rank);
-    Carp::croak("PerCUDA: size argument '$self->{size}' has fewer than $self->{dim} dimensions")
-        if @$size_dims < $self->{dim};
-    my @grid_size = (@{$size_dims}[ 0 .. $self->{dim} - 1 ], 1, 1)[ 0 .. 2 ];
-
-    my @dims_buf = @grid_size;
-    my @buffers;    # [ bytes, dims ] per argument
-    for my $i (0 .. $#args) {
-        my $arg   = $args[$i];
-        my $value = $values[$i];
-        my $fmt   = $PACK{ $arg->{type} } . '*';
-        if ($arg->{kind} eq 'array') {
-            Carp::croak("PerCUDA: argument '$arg->{name}' must be an array reference")
-                unless ref $value eq 'ARRAY';
-            my ($flat, $dims);
-            if (@$value) {
-                ($flat, $dims) = flatten($value, $arg->{rank});
-            }
-            else {
-                # an empty array (typically an output) takes the shape of the size argument
-                Carp::croak("PerCUDA: cannot infer the shape of empty array '$arg->{name}'")
-                    if $arg->{rank} > @$size_dims;
-                $dims = [ @{$size_dims}[ 0 .. $arg->{rank} - 1 ] ];
-                my $n = 1;
-                $n *= $_ for @$dims;
-                $flat = [ (0) x $n ];
-            }
-            no warnings 'uninitialized';
-            push @buffers, [ pack($fmt, @$flat), $dims ];
-            push @dims_buf, (@$dims, 0, 0)[ 0 .. 2 ];
+    my %buf;
+    for my $i (keys %{ $layout->{arrays} }) {
+        my $arg = $self->{args}[$i];
+        my ($dims, $empty) = @{ $layout->{arrays}{$i} }{qw(dims empty)};
+        my $bytes = $SIZE{ $arg->{type} };
+        $bytes *= $_ for @$dims;
+        $buf{$i} = $self->_buffer($i, $bytes || 1);
+        if ($empty) {
+            $buf{$i}->fill(0);
         }
-        elsif ($arg->{kind} eq 'scalar') {
-            Carp::croak("PerCUDA: argument '$arg->{name}' must be a number") if ref $value;
-            no warnings 'uninitialized';
-            push @buffers, [ pack($fmt, $value), undef ];
-            push @dims_buf, 0, 0, 0;
-        }
-        else {
-            push @buffers, [ "\0" x 8, undef ];
-            push @dims_buf, 0, 0, 0;
+        elsif ($bytes) {
+            $buf{$i}->write_array($values[$i], type => $TYPE{ $arg->{type} }, rank => $arg->{rank});
         }
     }
-    push @buffers, [ pack('l*', @dims_buf), undef ];
 
-    my @ptrs;
+    my @kernel_args = map {
+        my $p = $_;
+          $p->{kind} eq 'array'  ? $buf{ $p->{arg} }
+        : $p->{kind} eq 'scalar' ? [ $TYPE{ $p->{type} } => $values[ $p->{arg} ] ]
+        : $p->{kind} eq 'size'   ? [ i32 => $grid->[ $p->{axis} ] ]
+        :                          [ i32 => $layout->{arrays}{ $p->{arg} }{dims}[ $p->{axis} ] ];
+    } @{ $self->{params} };
+
+    # the last Perl axis runs along CUDA's x axis (see PerCUDA::CodeGen::CUDA)
+    my $dim    = $self->{dim};
+    my @block  = @{ $BLOCK{$dim} };
+    my @cuda   = map { $_ < $dim ? $grid->[ $dim - 1 - $_ ] : 1 } 0 .. 2;
+    my @blocks = map { int(($cuda[$_] + $block[$_] - 1) / $block[$_]) } 0 .. 2;
+    $self->_launch($PerCUDA::CodeGen::CUDA::KERNEL_NAME, \@kernel_args, [ @blocks, @block, 0 ])
+        unless grep { $_ == 0 } @blocks;
+
     my @results;
-    my $ok = eval {
-        for my $buf (@buffers) {
-            my $bytes = length $buf->[0] ? $buf->[0] : "\0" x 8;
-            my $ptr = $ctx->malloc($bytes);
-            push @ptrs, $ptr;
-            $ctx->transfer_h2d($bytes, $ptr);
-        }
-
-        my @block = @{ $BLOCK{ $self->{dim} } };
-        my @grid  = map { $grid_size[$_] ? int(($grid_size[$_] + $block[$_] - 1) / $block[$_]) : 0 } 0 .. 2;
-        if (!grep { $_ == 0 } @grid) {
-            $ctx->run($self->{ptx}, $PerCUDA::CodeGen::KERNEL_NAME, \@ptrs, [ @grid, @block, 0 ]);
-        }
-
-        for my $name (@{ $self->{retval} }) {
-            my $i   = $index{$name};
-            my $arg = $args[$i];
-            my $out = "\0" x length $buffers[$i][0];
-            $ctx->transfer_d2h($ptrs[$i], \$out) if length $out;
-            my @flat   = unpack $PACK{ $arg->{type} } . '*', $out;
-            my $result = unflatten(\@flat, $buffers[$i][1]);
-            @{ $values[$i] } = @$result;    # update the caller's array like the perl engine does
-            push @results, $values[$i];
-        }
-        1;
-    };
-    my $err = $@;
-    $ctx->free($_) for @ptrs;
-    die $err unless $ok;
+    for my $name (@{ $self->{retval} }) {
+        my $i = $self->{index}{$name};
+        # filled in place, reusing the caller's rows and scalars
+        $buf{$i}->read_array(
+            type => $TYPE{ $self->{args}[$i]{type} },
+            dims => $layout->{arrays}{$i}{dims},
+            into => $values[$i],
+        );
+        push @results, $values[$i];
+    }
+    $self->{context}->synchronize unless @results;    # report kernel errors even without retval
     return @results;
 }
 

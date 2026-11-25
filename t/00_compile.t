@@ -4,7 +4,10 @@ use Test::More;
 use_ok $_ for qw(
     PerCUDA
     PerCUDA::Parser
-    PerCUDA::CodeGen
+    PerCUDA::Analyzer
+    PerCUDA::CodeGen::CUDA
+    PerCUDA::CodeGen::Perl
+    PerCUDA::Engine
     PerCUDA::Compiler
     PerCUDA::Data
     PerCUDA::Engine::Perl
