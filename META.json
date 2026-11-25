@@ -34,6 +34,7 @@
       "develop" : {
          "requires" : {
             "Minilla" : "v3.3.2",
+            "PDL" : "2.106",
             "Perl::Critic" : "1.156",
             "Perl::Tidy" : "20260826",
             "Test::CPAN::Meta" : "0.25",
@@ -46,7 +47,8 @@
       },
       "runtime" : {
          "recommends" : {
-            "CUDA::DriverAPI" : "0.02"
+            "CUDA::DriverAPI" : "0.02",
+            "PDL" : "2.106"
          },
          "requires" : {
             "Carp" : "0",
@@ -59,15 +61,9 @@
             "Scalar::Util" : "0",
             "parent" : "0",
             "perl" : "v5.40.0"
-         },
-         "suggests" : {
-            "PDL" : "2.100"
          }
       },
       "test" : {
-         "recommends" : {
-            "PDL" : "2.100"
-         },
          "requires" : {
             "Test2::V0" : "0"
          }

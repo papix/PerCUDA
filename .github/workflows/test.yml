@@ -57,15 +57,17 @@ jobs:
       - uses: shogo82148/actions-setup-perl@eebc5c886de14ebbfcd2493d49a12007d2c30477 # v1.44.5
         with:
           perl-version: ${{ matrix.perl }}
-          install-modules-with: cpanm
+
+      - name: Install dependencies
+        run: cpanm --notest --with-configure --installdeps .
 
       - run: prove -l t/
 
       # Author and release tests (POD, spelling, minimum version, Perl::Critic,
-      # examples) once, on the latest Perl.
+      # examples, PDL) once, on the latest Perl.
       - name: Install develop dependencies
         if: matrix.perl == '5.44'
-        run: cpanm --notest --installdeps --with-develop .
+        run: cpanm --notest --with-configure --with-develop --installdeps .
       - name: Run author and release tests
         if: matrix.perl == '5.44'
         run: minil test --release

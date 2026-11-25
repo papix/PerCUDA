@@ -5,11 +5,13 @@
 - Perl 5.40 or later (CI covers 5.40, 5.42 and 5.44).
 - For the GPU engine: [CUDA::DriverAPI](https://github.com/papix/CUDA-DriverAPI)
   with NVRTC, and an NVIDIA GPU. Without them, everything runs on the perl
-  engine and the GPU tests skip.
-- Dependencies, including the author tools:
+  engine and the GPU tests skip. It is not on CPAN yet; install it from its
+  repository with `minil install`.
+- Dependencies, including the author tools and the optional PDL (needed for
+  `t/08_pdl.t`; `t/09_without_pdl.t` checks PerCUDA also works without it):
 
   ```sh
-  cpanm --installdeps --with-develop .
+  cpanm --with-configure --with-develop --installdeps .
   ```
 
 ## Build and test
@@ -26,7 +28,7 @@ the tests that compare the perl engine with the GPU only run there.
 ## Lint, formatting and secrets
 
 ```sh
-author/lint.sh         # perltidy, perlcritic, actionlint, gitleaks (tree and history)
+author/lint.sh         # perltidy, perlcritic, English only, actionlint, gitleaks (tree and history)
 author/lint.sh --fix   # reformat Perl files with .perltidyrc first
 ```
 
@@ -63,6 +65,8 @@ run `minil build`.
 
 ## Style
 
+- English only: code, comments, documentation, commit messages, pull
+  requests and issues.
 - `use v5.40` with signatures; no experimental features.
 - Every option and public method is documented in POD and has tests,
   including error cases.
