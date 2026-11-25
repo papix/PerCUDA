@@ -19,8 +19,13 @@
 ```sh
 prove -l t/                    # unit tests; GPU tests skip without a device
 minil test --release           # plus POD, spelling, Perl::Critic, examples
-perl eg/benchmark.pl gpu 1024  # matrix multiplication benchmark
+perl eg/benchmark.pl gpu 1024  # matrix multiplication, one run
+perl author/bench-life.pl      # Game of Life: perl engine, nested, ndarray and device arrays
 ```
+
+Compare a change with the previous commit by running the same benchmarks on
+both, alternating, and run the perl engine last: its large allocations slow
+down whatever is measured after it in the same process.
 
 Run the full suite on a machine with an NVIDIA GPU before sending a change:
 the tests that compare the perl engine with the GPU only run there.
@@ -52,10 +57,11 @@ usual names, and gitleaks catches the rest. A false positive goes into
 | `lib/PerCUDA/CodeGen/CUDA.pm`, `Perl.pm` | Code for NVRTC and for the perl engine |
 | `lib/PerCUDA/Compiler.pm` | NVRTC compilation and the on-disk cache |
 | `lib/PerCUDA/Engine.pm`, `Engine/GPU.pm`, `Engine/Perl.pm` | Running kernels; `PerCUDA::Runtime` helpers of the generated Perl |
+| `lib/PerCUDA/Array.pm` | Arrays kept with an engine between runs (`$runner->array`) |
 | `lib/PerCUDA/Data.pm` | Shapes and conversions of nested arrays |
 | `t/` | Tests; `t/lib/PerCUDATest.pm` detects the GPU |
 | `xt/` | Author tests (Perl::Critic, examples) |
-| `eg/` | Examples and the benchmark |
+| `eg/`, `author/` | Examples and benchmarks |
 
 ## Generated files
 

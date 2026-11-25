@@ -72,6 +72,15 @@ sub new ($class, %args) {
 
 sub engine ($self) { return $self->{engine}->name }
 
+sub array ($self, @args) {
+    my $data = @args % 2 ? shift @args : undef;
+    my %args = @args;
+    my $type = $args{type} // Carp::croak("PerCUDA: array needs type => 'i', 'f' or 'd'");
+    Carp::croak("PerCUDA: array type must be 'i', 'f' or 'd'") unless $type =~ /\A[ifd]\z/;
+    my ($source, $dims, $rank) = $self->{engine}->array_shape($data, $args{dims});
+    return $self->{engine}->make_array($source, $dims, $rank, $type);
+}
+
 # Number of online CPUs (Linux /proc, BSD and macOS sysctl), or 1.
 sub _cpu_count () {
     if (open my $fh, '<', '/proc/cpuinfo') {
@@ -236,6 +245,35 @@ place; an empty one takes the shape of the C<size> argument. The perl engine
 accepts ndarrays too, but unpacks them into nested arrays. PDL is never
 loaded by PerCUDA itself.
 
+=item C<< $runner->array($nested_or_ndarray, type => $type) >>
+
+=item C<< $runner->array(type => $type, dims => \@dims) >>
+
+Returns a L<PerCUDA::Array> that stays with the runner's engine between runs:
+in device memory on the GPU, as a nested array already converted to C<$type>
+on the perl engine. It is made from a nested array or ndarray (copied), or
+filled with zeros in the shape C<@dims> (outermost first). Any runner on the
+same engine accepts it in place of an array argument of the same type and
+number of dimensions.
+
+Runs use it in place: nothing is copied, a kernel that writes it changes it
+(whether or not it is a C<retval>), and C<run> returns it for a C<retval>
+without copying the result back. On the GPU, C<run> then returns before the
+kernel finishes, and errors surface at the next C<< $array->get >>. Copy the
+contents back with C<< $array->get >>. This removes the transfers from
+repeated runs on the same data:
+
+    my $cur  = $life->array($board, type => 'i');
+    my $next = $life->array(type => 'i', dims => [ 1024, 1024 ]);
+    for (1 .. 1000) {
+        $life->run($cur, $next);
+        ($cur, $next) = ($next, $cur);
+    }
+    my $final = $cur->get;
+
+The same array cannot be passed for two arguments when the kernel writes
+either of them.
+
 =item C<< $runner->engine >>, C<< $runner->cuda_source >>, C<< $runner->perl_source >>
 
 The engine in use, and the generated CUDA C++ and Perl code.
@@ -318,6 +356,12 @@ most of it converting the Perl arrays, and 2.2 ms with ndarrays, close to
 hand-written CUDA. The perl engine takes 17 s with C<< perl_jobs => 'auto' >>
 (11 s with C<< perl_mode => 'fast' >>).
 
+Repeated runs on the same data gain the most from device arrays. For
+Conway's Game of Life on a 1024 x 1024 board (C<author/bench-life.pl>), a
+step takes 7.5 ms with nested arrays, 0.95 ms with ndarrays and 0.08 ms with
+device arrays (C<< $runner->array >>); the perl engine takes 325 ms with
+C<< perl_jobs => 'auto' >>.
+
 The GPU engine skips work it can prove unnecessary: an output that every
 thread overwrites (C<< $out->[$x][$y] = ... >> at the top level of the
 kernel, before any C<return>) is neither uploaded nor zero filled, and the
@@ -330,6 +374,7 @@ of a process pay for the CUDA initialization (about 0.15 s).
     perl eg/matmul.pl [gpu|perl]
     perl eg/mandelbrot.pl [gpu|perl] [width] [max_iterations] > mandelbrot.pgm
     perl eg/benchmark.pl [gpu|perl] [n]
+    perl author/bench-life.pl [--size N] [--steps N] [nested|ndarray|device|perl ...]
 
 =head1 DEPENDENCIES
 

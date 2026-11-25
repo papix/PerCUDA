@@ -110,6 +110,34 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     accepts ndarrays too, but unpacks them into nested arrays. PDL is never
     loaded by PerCUDA itself.
 
+- `$runner->array($nested_or_ndarray, type => $type)`
+- `$runner->array(type => $type, dims => \@dims)`
+
+    Returns a [PerCUDA::Array](https://metacpan.org/pod/PerCUDA%3A%3AArray) that stays with the runner's engine between runs:
+    in device memory on the GPU, as a nested array already converted to `$type`
+    on the perl engine. It is made from a nested array or ndarray (copied), or
+    filled with zeros in the shape `@dims` (outermost first). Any runner on the
+    same engine accepts it in place of an array argument of the same type and
+    number of dimensions.
+
+    Runs use it in place: nothing is copied, a kernel that writes it changes it
+    (whether or not it is a `retval`), and `run` returns it for a `retval`
+    without copying the result back. On the GPU, `run` then returns before the
+    kernel finishes, and errors surface at the next `$array->get`. Copy the
+    contents back with `$array->get`. This removes the transfers from
+    repeated runs on the same data:
+
+        my $cur  = $life->array($board, type => 'i');
+        my $next = $life->array(type => 'i', dims => [ 1024, 1024 ]);
+        for (1 .. 1000) {
+            $life->run($cur, $next);
+            ($cur, $next) = ($next, $cur);
+        }
+        my $final = $cur->get;
+
+    The same array cannot be passed for two arguments when the kernel writes
+    either of them.
+
 - `$runner->engine`, `$runner->cuda_source`, `$runner->perl_source`
 
     The engine in use, and the generated CUDA C++ and Perl code.
@@ -168,6 +196,12 @@ most of it converting the Perl arrays, and 2.2 ms with ndarrays, close to
 hand-written CUDA. The perl engine takes 17 s with `perl_jobs => 'auto'`
 (11 s with `perl_mode => 'fast'`).
 
+Repeated runs on the same data gain the most from device arrays. For
+Conway's Game of Life on a 1024 x 1024 board (`author/bench-life.pl`), a
+step takes 7.5 ms with nested arrays, 0.95 ms with ndarrays and 0.08 ms with
+device arrays (`$runner->array`); the perl engine takes 325 ms with
+`perl_jobs => 'auto'`.
+
 The GPU engine skips work it can prove unnecessary: an output that every
 thread overwrites (`$out->[$x][$y] = ...` at the top level of the
 kernel, before any `return`) is neither uploaded nor zero filled, and the
@@ -180,6 +214,7 @@ of a process pay for the CUDA initialization (about 0.15 s).
     perl eg/matmul.pl [gpu|perl]
     perl eg/mandelbrot.pl [gpu|perl] [width] [max_iterations] > mandelbrot.pgm
     perl eg/benchmark.pl [gpu|perl] [n]
+    perl author/bench-life.pl [--size N] [--steps N] [nested|ndarray|device|perl ...]
 
 # DEPENDENCIES
 

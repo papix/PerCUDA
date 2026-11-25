@@ -73,6 +73,26 @@ subtest 'empty ndarray for the result' => sub {
     }
 };
 
+subtest 'device arrays from and to ndarrays' => sub {
+    for my $engine (ndarray_engines()) {
+        my $r = PerCUDA->new(
+            engine   => $engine,
+            dim      => 2,
+            argument => [ in => 'f', out => 'f' ],
+            retval   => ['out'],
+            source   => '$out->[$x][$y] = $in->[$x][$y] * 2;',
+        );
+        my $in  = $r->array(sequence(float, 3, 2), type => 'f');
+        my $out = $r->array(type => 'f', dims => [ 2, 3 ]);
+        is $in->dims, [ 2, 3 ], "$engine: dims of an ndarray, outermost first";
+        $r->run($in, $out);
+        my $nd = zeroes(float, 0);
+        $out->get(into => $nd);
+        is [ $nd->dims ], [ 3, 2 ], "$engine: get(into => \$ndarray) reshapes it";
+        is $nd->unpdl, [ [ 0, 2, 4 ], [ 6, 8, 10 ] ], "$engine: and fills it";
+    }
+};
+
 subtest 'size argument as an ndarray' => sub {
     for my $engine (ndarray_engines()) {
         my $r = PerCUDA->new(

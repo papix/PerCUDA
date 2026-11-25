@@ -11,6 +11,9 @@ Revision history for Perl extension PerCUDA
     - Add precision => 'single' | 'double' for both engines
     - Pass scalars by value, coalesce memory access, reuse device buffers and
       the CUDA context, convert arrays in C (CUDA::DriverAPI write_array/read_array)
+    - Add $runner->array (PerCUDA::Array): arrays kept with the engine
+      between runs, without transfers
+    - Add author/bench-life.pl (Game of Life: perl, nested, ndarray, device)
     - Add perl_jobs to run the perl engine in several processes
     - Skip uploading outputs the kernel overwrites entirely, and upload an
       array passed for two read-only arguments once

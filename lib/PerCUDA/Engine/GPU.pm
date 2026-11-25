@@ -3,7 +3,9 @@ use v5.40;
 use parent 'PerCUDA::Engine';
 use Carp         ();
 use Scalar::Util qw(refaddr);
+use PerCUDA::Array;
 use PerCUDA::CodeGen::CUDA;
+use PerCUDA::Data qw(is_ndarray);
 use PerCUDA::Compiler;
 
 # Runs the kernel on a GPU: the CUDA C++ from PerCUDA::CodeGen::CUDA is
@@ -80,6 +82,19 @@ sub _ndarray_guard ($ndarray, $code) {
     die $@;
 }
 
+sub make_array ($self, $data, $dims, $rank, $type) {
+    my $bytes = $SIZE{$type};
+    $bytes *= $_ for @$dims;
+    my $buffer = $self->{context}->buffer(size => $bytes || 1);
+    if (!defined $data) {
+        $buffer->fill(0);
+    }
+    elsif ($bytes) {
+        _ndarray_guard(is_ndarray($data), sub { $buffer->write_array($data, type => $TYPE{$type}, rank => $rank) });
+    }
+    return PerCUDA::Array->_new(engine => 'gpu', type => $type, dims => $dims, buffer => $buffer);
+}
+
 sub run ($self, @values) {
     my $layout = $self->layout(\@values);
     my $grid   = $layout->{grid};
@@ -88,6 +103,12 @@ sub run ($self, @values) {
     for my $i (sort { $a <=> $b } keys %{ $layout->{arrays} }) {
         my $arg = $self->{args}[$i];
         my ($dims, $empty) = @{ $layout->{arrays}{$i} }{qw(dims empty)};
+
+        # A device array is already there.
+        if ($layout->{arrays}{$i}{device}) {
+            $buf{$i} = $values[$i]{buffer};
+            next;
+        }
 
         # The same array passed for two read-only arguments is copied once.
         my $key = !$empty && !$arg->{written} ? join(':', refaddr $values[$i], $arg->{type}, $arg->{rank}) : undef;
@@ -134,6 +155,13 @@ sub run ($self, @values) {
     my @results;
     for my $name (@{ $self->{retval} }) {
         my $i = $self->{index}{$name};
+
+        # A device array stays on the device; run returns without waiting for
+        # the kernel, and errors surface at the next copy back.
+        if ($layout->{arrays}{$i}{device}) {
+            push @results, $values[$i];
+            next;
+        }
 
         # filled in place: a nested array reuses its rows and scalars, an
         # ndarray (checked to have the matching type) is reshaped

@@ -10,6 +10,7 @@ my @modules = qw(
     PerCUDA::Engine
     PerCUDA::Compiler
     PerCUDA::Data
+    PerCUDA::Array
     PerCUDA::Engine::Perl
     PerCUDA::Engine::GPU
 );
