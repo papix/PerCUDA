@@ -11,5 +11,7 @@ Revision history for Perl extension PerCUDA
     - Add precision => 'single' | 'double' for both engines
     - Pass scalars by value, coalesce memory access, reuse device buffers and
       the CUDA context, convert arrays in C (CUDA::DriverAPI write_array/read_array)
+    - Accept PDL ndarrays for array arguments (copied without conversion on
+      the GPU engine); PDL stays optional
     - Add examples (eg/), author tests, perltidy, Perl::Critic, gitleaks,
       pre-commit hooks and GitHub Actions

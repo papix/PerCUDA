@@ -68,6 +68,17 @@ sub _launch ($self, @launch) {
     return;
 }
 
+# Versions of CUDA::DriverAPI before PDL support reject ndarrays as non-array
+# references; say what to do instead.
+sub _ndarray_guard ($ndarray, $code) {
+    return $code->() unless $ndarray;
+    my @result = eval { $code->() };
+    return @result unless $@;
+    Carp::croak("PerCUDA: this CUDA::DriverAPI does not accept PDL ndarrays; update it, or pass nested arrays")
+        if $@ =~ /(?:Expected an array reference|into must be an array reference)/;
+    die $@;
+}
+
 sub run ($self, @values) {
     my $layout = $self->layout(\@values);
     my $grid   = $layout->{grid};
@@ -83,7 +94,10 @@ sub run ($self, @values) {
             $buf{$i}->fill(0);
         }
         elsif ($bytes) {
-            $buf{$i}->write_array($values[$i], type => $TYPE{ $arg->{type} }, rank => $arg->{rank});
+
+            # a nested array is converted in C; an ndarray is copied as is
+            _ndarray_guard($layout->{arrays}{$i}{ndarray},
+                sub { $buf{$i}->write_array($values[$i], type => $TYPE{ $arg->{type} }, rank => $arg->{rank}) });
         }
     }
 
@@ -107,11 +121,17 @@ sub run ($self, @values) {
     for my $name (@{ $self->{retval} }) {
         my $i = $self->{index}{$name};
 
-        # filled in place, reusing the caller's rows and scalars
-        $buf{$i}->read_array(
-            type => $TYPE{ $self->{args}[$i]{type} },
-            dims => $layout->{arrays}{$i}{dims},
-            into => $values[$i],
+        # filled in place: a nested array reuses its rows and scalars, an
+        # ndarray (checked to have the matching type) is reshaped
+        _ndarray_guard(
+            $layout->{arrays}{$i}{ndarray},
+            sub {
+                $buf{$i}->read_array(
+                    type => $TYPE{ $self->{args}[$i]{type} },
+                    dims => $layout->{arrays}{$i}{dims},
+                    into => $values[$i],
+                );
+            }
         );
         push @results, $values[$i];
     }

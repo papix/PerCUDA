@@ -2,11 +2,33 @@ package PerCUDA::Data;
 use v5.40;
 use Carp ();
 use Exporter 'import';
+use Scalar::Util qw(blessed);
 
-our @EXPORT_OK = qw(shape zeros copy_array convert_array);
+our @EXPORT_OK = qw(shape zeros copy_array convert_array is_ndarray check_ndarray_type);
 
-# Dimensions of a rectangular nested array, following the first element down to $rank levels.
+# PDL type of each PerCUDA type. PDL itself is never loaded here: an ndarray
+# can only arrive when the caller has loaded it.
+my %PDL_TYPE = (i => 'long', f => 'float', d => 'double');
+
+sub is_ndarray ($value) { return blessed $value && $value->isa('PDL') }
+
+sub check_ndarray_type ($ndarray, $type, $name) {
+    Carp::croak(
+        "PerCUDA: ndarray '$name' must be of type $PDL_TYPE{$type} to receive the result, not " . $ndarray->type)
+        unless $ndarray->type eq $PDL_TYPE{$type};
+    return;
+}
+
+# Dimensions of a rectangular nested array, following the first element down
+# to $rank levels, outermost first. For a PDL ndarray this is the reverse of
+# ->dims (PDL lists the innermost dimension first; the memory order is the same).
 sub shape ($ref, $rank) {
+    if (is_ndarray($ref)) {
+        my @dims = reverse $ref->dims;
+        Carp::croak("PerCUDA: ndarray must have at least $rank dimensions, not " . scalar(@dims))
+            if @dims < $rank;
+        return [ @dims[ 0 .. $rank - 1 ] ];
+    }
     my @dims;
     my $node = $ref;
     for my $level (1 .. $rank) {

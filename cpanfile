@@ -13,12 +13,16 @@ requires 'parent';
 # without it, kernels run on the perl engine.
 recommends 'CUDA::DriverAPI', '0.02';
 
+# Array arguments may be PDL ndarrays; PerCUDA never loads PDL itself.
+suggests 'PDL', '2.100';
+
 on 'configure' => sub {
     requires 'Module::Build::Tiny', '0.053';
 };
 
 on 'test' => sub {
     requires 'Test2::V0';
+    recommends 'PDL', '2.100';    # t/08_pdl.t skips without it
 };
 
 on 'develop' => sub {

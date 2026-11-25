@@ -93,6 +93,18 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     faster than a new `[]`: the GPU engine fills it in place, reusing its rows
     and scalars.
 
+    Any array argument can also be a [PDL](https://metacpan.org/pod/PDL) ndarray, mixed freely with nested
+    arrays. Dimensions are listed outermost first in PerCUDA, which is the
+    reverse of `$ndarray->dims`: `$a->[$x][$y]` in a kernel is
+    `$ndarray->at($y, $x)`. The GPU engine copies ndarrays without any
+    per-element conversion, which makes it many times faster than nested arrays
+    (see ["PERFORMANCE"](#performance)); an input ndarray of another type is converted. A
+    `retval` ndarray must already have the type of its argument (`long`,
+    `float` or `double` for `i`, `f` or `d`) and is reshaped and filled in
+    place; an empty one takes the shape of the `size` argument. The perl engine
+    accepts ndarrays too, but unpacks them into nested arrays. PDL is never
+    loaded by PerCUDA itself.
+
 - `$runner->engine`, `$runner->cuda_source`, `$runner->perl_source`
 
     The engine in use, and the generated CUDA C++ and Perl code.
@@ -145,9 +157,10 @@ negative zero (`0.0 * -1`), and dividing by it gives inf instead of -inf.
 # PERFORMANCE
 
 On a GeForce RTX 4070 SUPER, a 1024 x 1024 single precision matrix
-multiplication (`eg/benchmark.pl`) takes about 17 ms per `run` on the GPU
-(10 ms when the output array is reused), including the conversion of the
-Perl arrays, against 90 s on the perl engine. Compiled kernels and the CUDA
+multiplication (`eg/benchmark.pl`) takes per `run` on the GPU about 20 ms
+with nested arrays (16 ms when the output array is reused), most of it
+converting the Perl arrays, and 2.7 ms with ndarrays, close to hand-written
+CUDA. The perl engine takes about 90 s. Compiled kernels and the CUDA
 context are reused, so only the first `new` and `run` of a process pay for
 the CUDA initialization (about 0.15 s).
 
@@ -161,7 +174,8 @@ the CUDA initialization (about 0.15 s).
 
 Perl 5.40 or later. The GPU engine needs [CUDA::DriverAPI](https://metacpan.org/pod/CUDA%3A%3ADriverAPI) with NVRTC (CUDA
 12.0 or later) and an NVIDIA GPU; without them, kernels run on the perl
-engine.
+engine. [PDL](https://metacpan.org/pod/PDL) is optional; passing ndarrays to the GPU engine needs a
+CUDA::DriverAPI that accepts them in `write_array` and `read_array`.
 
 # SEE ALSO
 

@@ -31,5 +31,10 @@ Setup, commands, layout and style are in `CONTRIBUTING.md`; read it first.
 - CUDA::DriverAPI changes quickly in its own repository; check its POD before
   relying on an API. All runners share one CUDA context per device, so a
   sticky kernel error breaks every runner in the process.
+- PDL is optional: never `use PDL` in `lib/`; detect ndarrays with
+  `blessed && isa('PDL')` (`PerCUDA::Data::is_ndarray`). `t/09_without_pdl.t`
+  hides PDL. Dimensions are outermost first everywhere in PerCUDA and
+  CUDA::DriverAPI, the reverse of `$ndarray->dims`; never transpose, and never
+  convert nested arrays to ndarrays internally (slower than `write_array`).
 - The driver loads images lazily: a broken cache entry fails on the first
   `run`, where `Engine::GPU` recompiles and retries once.

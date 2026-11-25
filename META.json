@@ -59,9 +59,15 @@
             "Scalar::Util" : "0",
             "parent" : "0",
             "perl" : "v5.40.0"
+         },
+         "suggests" : {
+            "PDL" : "2.100"
          }
       },
       "test" : {
+         "recommends" : {
+            "PDL" : "2.100"
+         },
          "requires" : {
             "Test2::V0" : "0"
          }

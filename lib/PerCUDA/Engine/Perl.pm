@@ -27,20 +27,30 @@ sub perl_source ($self) { return $self->{perl_source} }
 sub run ($self, @values) {
     my $layout = $self->layout(\@values);
     my @call   = @values;
+    my %ndarray_out;    # index => nested array to store back into the caller's ndarray
     for my $i (sort { $a <=> $b } keys %{ $layout->{arrays} }) {
         my $arg = $self->{args}[$i];
-        my ($dims, $empty) = @{ $layout->{arrays}{$i} }{qw(dims empty)};
+        my ($dims, $empty, $ndarray) = @{ $layout->{arrays}{$i} }{qw(dims empty ndarray)};
+        my $retval = $self->{is_retval}{ $arg->{name} };
+
+        # The generated code indexes nested arrays, so an ndarray is unpacked
+        # into one (a copy). This is slow, but only on the perl engine.
+        my $value = $ndarray && !$empty ? $values[$i]->unpdl : $values[$i];
 
         # The GPU sees the values as converted to the declared type, and only
         # retval arrays are copied back to the caller.
         my $convert = $arg->{type} eq 'i' || ($arg->{type} eq 'f' && ($self->{mode} // 'compat') ne 'fast');
         my $converted =
-              $empty   ? zeros($dims)
-            : $convert ? convert_array($values[$i], $arg->{rank}, $arg->{type})
-            : $arg->{written} && !$self->{is_retval}{ $arg->{name} } ? copy_array($values[$i], $arg->{rank})
-            :                                                          undef;
+              $empty                      ? zeros($dims)
+            : $convert                    ? convert_array($value, $arg->{rank}, $arg->{type})
+            : $ndarray                    ? $value
+            : $arg->{written} && !$retval ? copy_array($value, $arg->{rank})
+            :                               undef;
         next unless $converted;
-        if ($self->{is_retval}{ $arg->{name} }) {
+        if ($retval && $ndarray) {
+            $call[$i] = $ndarray_out{$i} = $converted;
+        }
+        elsif ($retval) {
             @{ $values[$i] } = @$converted;    # updated in place, like the GPU engine
         }
         else {
@@ -48,6 +58,13 @@ sub run ($self, @values) {
         }
     }
     $self->{code}->(@call, @{ $layout->{grid} });
+
+    for my $i (keys %ndarray_out) {
+        my $ndarray = $values[$i];
+        my $result  = PDL->pdl($ndarray->type, $ndarray_out{$i});
+        $ndarray->reshape(reverse @{ $layout->{arrays}{$i}{dims} });
+        $ndarray .= $result;
+    }
     return map { $values[ $self->{index}{$_} ] } @{ $self->{retval} };
 }
 
