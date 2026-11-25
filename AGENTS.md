@@ -39,6 +39,13 @@ Setup, commands, layout and style are in `CONTRIBUTING.md`; read it first.
   are outermost first everywhere in PerCUDA and CUDA::DriverAPI, the reverse
   of `$ndarray->dims`; never transpose, and never convert nested arrays to
   ndarrays internally (slower than `write_array`).
+- `PerCUDA::Analyzer` proves which work can be skipped: `covered` arrays
+  (never read, stored unconditionally by every thread into its own element)
+  are not uploaded, and `writes_own_rows` kernels may be split across
+  `perl_jobs` processes. Keep those proofs conservative; `t/02_codegen.t` and
+  `t/06_parity.t` hold the counterexamples.
+- `perl_jobs` forks: children must leave with `POSIX::_exit` so that they run
+  no END blocks or destructors (e.g. of the CUDA context) of the parent.
 - All runners for a device share one CUDA context, so a sticky kernel error
   breaks every runner in the process.
 - The driver loads code lazily: a broken cache entry loads fine and fails at

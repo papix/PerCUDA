@@ -106,6 +106,29 @@ subtest 'empty output is zero filled' => sub {
     }
 };
 
+subtest 'elements the kernel does not write keep their values' => sub {
+    my %covered = (
+        'every element written'      => [ '$out->[$x] = $x;',                   [ 0, 1,  2,  3 ] ],
+        'return before the store'    => [ 'return if $x % 2; $out->[$x] = $x;', [ 0, 9,  2,  9 ] ],
+        'store under a condition'    => [ 'if ($x > 1) { $out->[$x] = $x; }',   [ 9, 9,  2,  3 ] ],
+        'store reads the old value'  => [ '$out->[$x] += $x;',                  [ 9, 10, 11, 12 ] ],
+        'store into another element' => [ '$out->[3 - $x] = $x if $x < 2;',     [ 9, 9,  1,  0 ] ],
+    );
+    for my $name (sort keys %covered) {
+        my ($source, $expected) = @{ $covered{$name} };
+        for my $engine (both_engines()) {
+            my $r = PerCUDA->new(
+                engine   => $engine,
+                argument => [ in => 'i', out => 'i' ],
+                size     => 'in',
+                retval   => ['out'],
+                source   => $source,
+            );
+            is scalar $r->run([ 1 .. 4 ], [ (9) x 4 ]), $expected, "$name ($engine)";
+        }
+    }
+};
+
 subtest 'precision => double' => sub {
     my $source = <<'K';
 my $s = 0.0;

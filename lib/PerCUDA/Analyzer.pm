@@ -28,6 +28,7 @@ sub new ($class, %args) {
     $self->_analyze_arguments;
     $self->_resolve;
     $self->_infer;
+    $self->_analyze_writes;
     return $self;
 }
 
@@ -36,8 +37,15 @@ sub dim  ($self) { return $self->{dim} }
 sub real ($self) { return $self->{real} }
 sub axes ($self) { return @AXES[ 0 .. $self->{dim} - 1 ] }
 
-# [ { name, type, kind => array|scalar|unused, rank, read, written } ] in declaration order
+# [ { name, type, kind => array|scalar|unused, rank, read, written, covered } ] in declaration order.
+# covered: the array is never read and every thread stores into its own
+# element ($a->[$x][$y] = ... for dim 2) unconditionally, so when its shape is
+# the grid, every element is overwritten.
 sub args ($self) { return $self->{args} }
+
+# True when every store into an array uses $x as its first index, so threads
+# with different $x never write the same element.
+sub writes_own_rows ($self) { return $self->{writes_own_rows} }
 
 sub new_id ($self) { return $self->{next_id}++ }
 
@@ -150,6 +158,7 @@ sub _resolve ($self) {
     my %global;
     for my $axis ($self->axes) {
         $global{$axis} = $self->_new_symbol(name => $axis, cname => "percuda_$axis", fixed => 1);
+        push @{ $self->{thread_syms} }, $global{$axis};
         $global{"size_$axis"} = $self->_new_symbol(name => "size_$axis", cname => "percuda_size_$axis", fixed => 1);
     }
     for my $arg (@{ $self->{args} }) {
@@ -364,6 +373,41 @@ sub type_of ($self, $e) {
 }
 
 sub nonneg_int_literal ($e) { return $e->{t} eq 'num' && !$e->{float} && $e->{value} >= 0 }
+
+# ---- which elements the kernel writes (for skipping uploads and splitting work) ----
+
+sub _analyze_writes ($self) {
+    my @thread = @{ $self->{thread_syms} };
+    my $moved  = assigned_symbols($self->{ast});
+    my $fixed  = !grep { $moved->{ refaddr $_ } } @thread;    # $x, $y, $z are never assigned
+
+    my $is_thread_var = sub ($e, $axis) { $e->{t} eq 'var' && $e->{sym} == $thread[$axis] };
+
+    my $own_rows = $fixed;
+    walk(
+        $self->{ast},
+        sub ($n) {
+            my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
+            $own_rows = 0 if $target && $target->{t} eq 'elem' && !$is_thread_var->($target->{idx}[0], 0);
+        }
+    );
+    $self->{writes_own_rows} = $own_rows ? 1 : 0;
+
+    # Top-level stores reached by every thread: no return before them.
+    my %covered;
+    for my $stmt (@{ $self->{ast}{body} }) {
+        my $returns = 0;
+        walk($stmt, sub ($n) { $returns = 1 if $n->{t} eq 'return' });
+        last if $returns;
+        next unless $fixed && $stmt->{t} eq 'expr' && $stmt->{e}{t} eq 'assign' && $stmt->{e}{op} eq '=';
+        my $lhs = $stmt->{e}{lhs};
+        next unless $lhs->{t} eq 'elem' && @{ $lhs->{idx} } == $self->{dim};
+        next if grep { !$is_thread_var->($lhs->{idx}[$_], $_) } 0 .. $self->{dim} - 1;
+        $covered{ $lhs->{name} } = 1;
+    }
+    $_->{covered} = $covered{ $_->{name} } && !$_->{read} ? 1 : 0 for @{ $self->{args} };
+    return;
+}
 
 # ---- kernel ABI shared by the C generator and the GPU engine ----
 #

@@ -76,6 +76,11 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     but rounding every single precision operation makes it several times slower.
     `fast` skips single precision rounding and 32-bit integer wrapping, so
     results may differ slightly from the GPU.
+    - `perl_jobs`: number of processes for the perl engine, or `auto` for
+    one per CPU (default 1). The rows of the grid (`$x`) are dealt out to
+    forked processes, which send back their rows of the `retval` arrays; results
+    are the same as with one process. Only kernels whose stores all use `$x` as
+    the first index are split; others run in one process.
     - `cache_dir`: directory of compiled kernels (`$ENV{PERCUDA_CACHE_DIR}`,
     default `~/.cache/percuda`). A broken entry is compiled again on the first
     run.
@@ -156,13 +161,19 @@ negative zero (`0.0 * -1`), and dividing by it gives inf instead of -inf.
 
 # PERFORMANCE
 
-On a GeForce RTX 4070 SUPER, a 1024 x 1024 single precision matrix
-multiplication (`eg/benchmark.pl`) takes per `run` on the GPU about 20 ms
-with nested arrays (16 ms when the output array is reused), most of it
-converting the Perl arrays, and 2.7 ms with ndarrays, close to hand-written
-CUDA. The perl engine takes about 90 s. Compiled kernels and the CUDA
-context are reused, so only the first `new` and `run` of a process pay for
-the CUDA initialization (about 0.15 s).
+On a GeForce RTX 4070 SUPER with a Core i7-14700F, a 1024 x 1024 single
+precision matrix multiplication (`eg/benchmark.pl`) takes per `run` on the
+GPU about 20 ms with nested arrays (13 ms when the output array is reused),
+most of it converting the Perl arrays, and 2.2 ms with ndarrays, close to
+hand-written CUDA. The perl engine takes 17 s with `perl_jobs => 'auto'`
+(11 s with `perl_mode => 'fast'`).
+
+The GPU engine skips work it can prove unnecessary: an output that every
+thread overwrites (`$out->[$x][$y] = ...` at the top level of the
+kernel, before any `return`) is neither uploaded nor zero filled, and the
+same array passed for two read-only arguments is uploaded once. Compiled
+kernels and the CUDA context are reused, so only the first `new` and `run`
+of a process pay for the CUDA initialization (about 0.15 s).
 
 # EXAMPLES
 

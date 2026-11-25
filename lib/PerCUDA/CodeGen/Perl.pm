@@ -26,6 +26,7 @@ sub generate ($self) {
         $_->{kind} eq 'array' ? "\$v_$_->{name}" : $_->{kind} eq 'scalar' ? "\$p_$_->{name}" : "\$unused_$_->{name}"
     } @{ $an->args };
     push @params, map { "\$percuda_size_$_" } @axes;
+    push @params, '$percuda_xs';    # optional: the x indices to run (array reference)
 
     my $out = "sub {\n    my (" . join(', ', @params) . ") = \@_;\n";
     for my $arg (grep { $_->{kind} eq 'scalar' } @{ $an->args }) {
@@ -37,7 +38,9 @@ sub generate ($self) {
     my $level = 1;
     for my $i (0 .. $#axes) {
         my $label = $i == $#axes ? 'PERCUDA_THREAD: ' : '';
-        $out .= _ind($level++) . "${label}for my \$percuda_$axes[$i] (0 .. \$percuda_size_$axes[$i] - 1) {\n";
+        my $range = "0 .. \$percuda_size_$axes[$i] - 1";
+        $range = "\$percuda_xs ? \@\$percuda_xs : ($range)" if $i == 0;
+        $out .= _ind($level++) . "${label}for my \$percuda_$axes[$i] ($range) {\n";
     }
     $out .= join '', map { $self->_stmt($_, $level) } @{ $an->ast->{body} };
     $out .= _ind(--$level) . "}\n" for @axes;

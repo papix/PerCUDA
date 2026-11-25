@@ -22,6 +22,10 @@ sub new ($class, %args) {
     Carp::croak("PerCUDA: precision must be 'single' or 'double'") unless $precision =~ /\A(?:single|double)\z/;
     my $perl_mode = $args{perl_mode} // 'compat';
     Carp::croak("PerCUDA: perl_mode must be 'compat' or 'fast'") unless $perl_mode =~ /\A(?:compat|fast)\z/;
+    my $perl_jobs = $args{perl_jobs} // 1;
+    Carp::croak("PerCUDA: perl_jobs must be a positive integer or 'auto'")
+        unless $perl_jobs =~ /\A(?:[1-9][0-9]*|auto)\z/;
+    $perl_jobs = _cpu_count() if $perl_jobs eq 'auto';
 
     my $ast = PerCUDA::Parser->new(source => $source)->parse;
     my $an  = PerCUDA::Analyzer->new(ast => $ast, dim => $dim, arguments => \@arguments, precision => $precision);
@@ -62,11 +66,22 @@ sub new ($class, %args) {
         precision => $precision,
         cache_dir => $args{cache_dir},
         )
-        : PerCUDA::Engine::Perl->new(%common, mode => $perl_mode);
+        : PerCUDA::Engine::Perl->new(%common, mode => $perl_mode, jobs => $perl_jobs);
     return $self;
 }
 
 sub engine ($self) { return $self->{engine}->name }
+
+# Number of online CPUs (Linux /proc, BSD and macOS sysctl), or 1.
+sub _cpu_count () {
+    if (open my $fh, '<', '/proc/cpuinfo') {
+        my $count = grep { /^processor\s*:/ } <$fh>;
+        close $fh;
+        return $count if $count;
+    }
+    my $sysctl = `sysctl -n hw.ncpu 2>/dev/null` // '';
+    return $sysctl =~ /\A([1-9][0-9]*)/ ? $1 : 1;
+}
 
 sub cuda_source ($self) {
     return $self->{cuda_source} //= PerCUDA::CodeGen::CUDA->new($self->{analyzer})->generate;
@@ -182,6 +197,12 @@ but rounding every single precision operation makes it several times slower.
 C<fast> skips single precision rounding and 32-bit integer wrapping, so
 results may differ slightly from the GPU.
 
+=item C<perl_jobs>: number of processes for the perl engine, or C<auto> for
+one per CPU (default 1). The rows of the grid (C<$x>) are dealt out to
+forked processes, which send back their rows of the C<retval> arrays; results
+are the same as with one process. Only kernels whose stores all use C<$x> as
+the first index are split; others run in one process.
+
 =item C<cache_dir>: directory of compiled kernels (C<$ENV{PERCUDA_CACHE_DIR}>,
 default C<~/.cache/percuda>). A broken entry is compiled again on the first
 run.
@@ -290,13 +311,19 @@ negative zero (C<0.0 * -1>), and dividing by it gives inf instead of -inf.
 
 =head1 PERFORMANCE
 
-On a GeForce RTX 4070 SUPER, a 1024 x 1024 single precision matrix
-multiplication (C<eg/benchmark.pl>) takes per C<run> on the GPU about 20 ms
-with nested arrays (16 ms when the output array is reused), most of it
-converting the Perl arrays, and 2.7 ms with ndarrays, close to hand-written
-CUDA. The perl engine takes about 90 s. Compiled kernels and the CUDA
-context are reused, so only the first C<new> and C<run> of a process pay for
-the CUDA initialization (about 0.15 s).
+On a GeForce RTX 4070 SUPER with a Core i7-14700F, a 1024 x 1024 single
+precision matrix multiplication (C<eg/benchmark.pl>) takes per C<run> on the
+GPU about 20 ms with nested arrays (13 ms when the output array is reused),
+most of it converting the Perl arrays, and 2.2 ms with ndarrays, close to
+hand-written CUDA. The perl engine takes 17 s with C<< perl_jobs => 'auto' >>
+(11 s with C<< perl_mode => 'fast' >>).
+
+The GPU engine skips work it can prove unnecessary: an output that every
+thread overwrites (C<< $out->[$x][$y] = ... >> at the top level of the
+kernel, before any C<return>) is neither uploaded nor zero filled, and the
+same array passed for two read-only arguments is uploaded once. Compiled
+kernels and the CUDA context are reused, so only the first C<new> and C<run>
+of a process pay for the CUDA initialization (about 0.15 s).
 
 =head1 EXAMPLES
 

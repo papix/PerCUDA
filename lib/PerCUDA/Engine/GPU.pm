@@ -1,7 +1,8 @@
 package PerCUDA::Engine::GPU;
 use v5.40;
 use parent 'PerCUDA::Engine';
-use Carp ();
+use Carp         ();
+use Scalar::Util qw(refaddr);
 use PerCUDA::CodeGen::CUDA;
 use PerCUDA::Compiler;
 
@@ -83,13 +84,26 @@ sub run ($self, @values) {
     my $layout = $self->layout(\@values);
     my $grid   = $layout->{grid};
 
-    my %buf;
-    for my $i (keys %{ $layout->{arrays} }) {
+    my (%buf, %shared);
+    for my $i (sort { $a <=> $b } keys %{ $layout->{arrays} }) {
         my $arg = $self->{args}[$i];
         my ($dims, $empty) = @{ $layout->{arrays}{$i} }{qw(dims empty)};
+
+        # The same array passed for two read-only arguments is copied once.
+        my $key = !$empty && !$arg->{written} ? join(':', refaddr $values[$i], $arg->{type}, $arg->{rank}) : undef;
+        if (defined $key && defined $shared{$key}) {
+            $buf{$i} = $buf{ $shared{$key} };
+            next;
+        }
+        $shared{$key} = $i if defined $key;
+
         my $bytes = $SIZE{ $arg->{type} };
         $bytes *= $_ for @$dims;
         $buf{$i} = $self->_buffer($i, $bytes || 1);
+
+        # An array the kernel overwrites entirely needs no upload or zero fill.
+        next if $arg->{covered} && "@$dims" eq "@{$grid}";
+
         if ($empty) {
             $buf{$i}->fill(0);
         }

@@ -38,4 +38,22 @@ subtest 'Perl' => sub {
     like $perl, qr/for \(; \(\$l\d+_j < \$v_n\); /,                  'loop that assigns its counter stays C style';
 };
 
+subtest 'write analysis' => sub {
+    my sub analyze ($source) {
+        my $ast = PerCUDA::Parser->new(source => $source)->parse;
+        return PerCUDA::Analyzer->new(ast => $ast, dim => 2, arguments => [ [ a => 'f' ], [ out => 'f' ] ]);
+    }
+    my sub covered ($source) { return analyze($source)->args->[1]{covered} }
+
+    ok covered('my $v = $a->[$x][$y]; $out->[$x][$y] = $v;'), 'unconditional store into the own element';
+    ok !covered('$out->[$y][$x] = 1;'),                       'transposed store';
+    ok !covered('return if $x; $out->[$x][$y] = 1;'),         'store after a return';
+    ok !covered('$out->[$x][$y] = 1 if $y;'),                 'conditional store';
+    ok !covered('$out->[$x][$y] = $out->[$x][$y] + 1;'),      'array is read';
+    ok !covered('$x = 0; $out->[$x][$y] = 1;'),               'thread index reassigned';
+
+    ok analyze('$out->[$x][0] = 1; $out->[$x][$y] += 2;')->writes_own_rows, 'all stores use $x first';
+    ok !analyze('$out->[$y][$x] = 1;')->writes_own_rows,                    'store into another row';
+};
+
 done_testing;

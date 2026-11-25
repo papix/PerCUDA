@@ -1,7 +1,9 @@
 package PerCUDA::Engine::Perl;
 use v5.40;
 use parent 'PerCUDA::Engine';
-use Carp ();
+use Carp     ();
+use POSIX    ();
+use Storable ();
 use PerCUDA::CodeGen::Perl;
 use PerCUDA::Data qw(zeros copy_array convert_array);
 
@@ -57,7 +59,10 @@ sub run ($self, @values) {
             $call[$i] = $converted;
         }
     }
-    $self->{code}->(@call, @{ $layout->{grid} });
+    my @results = map { $self->{index}{$_} } @{ $self->{retval} };
+    if (!$self->_run_parallel(\@call, $layout, [ map { $call[$_] } @results ])) {
+        $self->{code}->(@call, @{ $layout->{grid} });
+    }
 
     for my $i (keys %ndarray_out) {
         my $ndarray = $values[$i];
@@ -65,7 +70,56 @@ sub run ($self, @values) {
         $ndarray->reshape(reverse @{ $layout->{arrays}{$i}{dims} });
         $ndarray .= $result;
     }
-    return map { $values[ $self->{index}{$_} ] } @{ $self->{retval} };
+    return map { $values[$_] } @results;
+}
+
+# With perl_jobs > 1, splits the x axis between forked processes, which send
+# back their rows of the retval arrays. Only kernels whose stores all use $x
+# as the first index qualify, so that the processes never write the same
+# element. Rows are dealt out in turn, which balances uneven rows (e.g. the
+# Mandelbrot set). Returns false when the kernel has to run in this process.
+sub _run_parallel ($self, $call, $layout, $outputs) {
+    my $size_x = $layout->{grid}[0];
+    my $jobs   = $self->{jobs} // 1;
+    $jobs = $size_x if $jobs > $size_x;
+    return 0 if $jobs < 2 || !$self->{analyzer}->writes_own_rows;
+
+    my @children;
+    for my $job (0 .. $jobs - 1) {
+        my @xs = grep { $_ % $jobs == $job } 0 .. $size_x - 1;
+        pipe(my $reader, my $writer) or Carp::croak("PerCUDA: pipe failed: $!");
+        my $pid = fork // Carp::croak("PerCUDA: fork failed: $!");
+        if (!$pid) {
+            close $reader;
+            my $message = eval {
+                $self->{code}->(@$call, @{ $layout->{grid} }, \@xs);
+                Storable::freeze([ map { [ @{$_}[@xs] ] } @$outputs ]);
+            } // Storable::freeze(\"$@");
+            binmode $writer;
+            print {$writer} $message;
+            close $writer;
+            POSIX::_exit(0);    # skip END blocks and destructors of the parent's objects
+        }
+        close $writer;
+        push @children, [ $pid, $reader, \@xs ];
+    }
+
+    my $error;
+    for my $child (@children) {
+        my ($pid, $reader, $xs) = @$child;
+        binmode $reader;
+        my $message = do { local $/; <$reader> };
+        close $reader;
+        waitpid $pid, 0;
+        my $rows = length $message ? Storable::thaw($message) : \"PerCUDA: a worker process exited unexpectedly";
+        if (ref $rows eq 'SCALAR') {
+            $error //= $$rows;
+            next;
+        }
+        @{ $outputs->[$_] }[@$xs] = @{ $rows->[$_] } for 0 .. $#$outputs;
+    }
+    die $error if defined $error;
+    return 1;
 }
 
 package PerCUDA::Runtime;
