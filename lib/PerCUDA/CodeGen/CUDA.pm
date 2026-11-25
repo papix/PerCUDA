@@ -17,6 +17,12 @@ static __device__ inline long long percuda_mod(long long a, long long b) {
     if (r != 0 && ((r < 0) != (b < 0))) r += b;
     return r;
 }
+static __device__ inline int percuda_mod_i(int a, int b) {
+    if (b == 0 || b == -1) return 0;    /* b == -1 also avoids INT_MIN % -1 */
+    int r = a % b;
+    if (r != 0 && ((r < 0) != (b < 0))) r += b;
+    return r;
+}
 static __device__ inline int percuda_powi_i(int x, int n) {
     int r = 1;
     while (n > 0) { if (n & 1) r *= x; x *= x; n >>= 1; }
@@ -214,6 +220,11 @@ sub _bin ($self, $e) {
 
     return '(' . $self->_cast($type, $l) . ' / ' . $self->_cast($type, $r) . ')' if $op eq '/';
     if ($op eq '%') {
+
+        # 64-bit division is emulated on GPUs; int operands need only 32 bits
+        if ($self->{an}->type_of($l) eq 'i' && $self->{an}->type_of($r) eq 'i') {
+            return 'percuda_mod_i(' . $self->_expr($l) . ', ' . $self->_expr($r) . ')';
+        }
         return '((int)percuda_mod((long long)(' . $self->_expr($l) . '), (long long)(' . $self->_expr($r) . ')))';
     }
     if ($op eq '**') {
