@@ -22,16 +22,17 @@ my %KEYWORD = map { $_ => 1 } qw(
 
 # Functions and their number of arguments. floor and ceil are POSIX's.
 our %BUILTIN = (
-    sqrt  => 1,
-    abs   => 1,
-    int   => 1,
-    exp   => 1,
-    log   => 1,
-    sin   => 1,
-    cos   => 1,
-    floor => 1,
-    ceil  => 1,
-    atan2 => 2,
+    sqrt   => 1,
+    abs    => 1,
+    int    => 1,
+    exp    => 1,
+    log    => 1,
+    sin    => 1,
+    cos    => 1,
+    floor  => 1,
+    ceil   => 1,
+    atan2  => 2,
+    random => [ 1, 4 ],    # random($seed, $key, ...): counter-based uniform in [0, 1)
 );
 
 sub new ($class, %args) {
@@ -399,18 +400,22 @@ sub _primary ($self) {
         $self->_next;
         Carp::croak("PerCUDA: function '$tok->{value}' is not supported in kernels at line $tok->{line}")
             unless $BUILTIN{ $tok->{value} };
-        my $arity = $BUILTIN{ $tok->{value} };
+        my ($min, $max) =
+            ref $BUILTIN{ $tok->{value} } ? @{ $BUILTIN{ $tok->{value} } } : ($BUILTIN{ $tok->{value} }) x 2;
         my @args;
         if ($self->_accept(op => '(')) {
-            push @args, $self->_assign_expr;
-            while ($self->_accept(op => ',')) { push @args, $self->_assign_expr }
-            $self->_expect(op => ')');
+            if (!$self->_accept(op => ')')) {
+                push @args, $self->_assign_expr;
+                while ($self->_accept(op => ',')) { push @args, $self->_assign_expr }
+                $self->_expect(op => ')');
+            }
         }
-        elsif ($arity == 1) {
+        elsif ($max == 1) {
             push @args, $self->_shift;    # named unary operator: sqrt $x + 1 is sqrt($x + 1)
         }
-        Carp::croak("PerCUDA: $tok->{value} takes $arity argument" . ($arity > 1 ? 's' : '') . " at line $tok->{line}")
-            unless @args == $arity;
+        my $count = $min == $max ? $min : "$min to $max";
+        Carp::croak("PerCUDA: $tok->{value} takes $count argument" . ($max > 1 ? 's' : '') . " at line $tok->{line}")
+            unless @args >= $min && @args <= $max;
         return { t => 'call', name => $tok->{value}, args => \@args, line => $tok->{line} };
     }
     $self->_error('unexpected token');

@@ -222,6 +222,9 @@ sub _expr ($self, $e) {
         return 'int(' . $self->_expr($e->{args}[0]) . ')' if $e->{name} eq 'int';
         return 'abs(' . $self->_expr($e->{args}[0]) . ')' if $e->{name} eq 'abs';
         my $name = $e->{name};
+        if ($name eq 'random') {    # integer arithmetic only: identical in every mode
+            return "PerCUDA::Runtime::random_$type(" . join(', ', map { $self->_cast('i', $_) } @{ $e->{args} }) . ')';
+        }
         my $args = join ', ', map { $self->_cast($type, $_) } @{ $e->{args} };
         return "PerCUDA::Math::${name}_$type($args)"
             if $self->{portable} && grep { $_ eq $name } @PerCUDA::Math::FUNCTIONS;

@@ -11,6 +11,10 @@ Revision history for Perl extension PerCUDA
     - Add precision => 'single' | 'double' for both engines
     - Pass scalars by value, coalesce memory access, reuse device buffers and
       the CUDA context, convert arrays in C (CUDA::DriverAPI write_array/read_array)
+    - Add reductions of device arrays (sum, min, max, argmin, argmax) in a
+      fixed order, identical on both engines
+    - Add random($seed, ...), a counter-based generator identical on both
+      engines; add eg/pi.pl (Monte Carlo)
     - Add exp, log, sin, cos, atan2, floor, ceil and ** with any exponent
     - Replace perl_mode with mode => 'fast' | 'compat' | 'exact'; exact uses
       PerCUDA::Math on both engines for bit-identical math functions

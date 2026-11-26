@@ -30,6 +30,12 @@ Setup, commands, layout and style are in `CONTRIBUTING.md`; read it first.
   hardware approximation). Each function there is one syntax tree rendered to
   both CUDA and Perl; change the tree, not one rendering. `t/12_math.t`
   checks bit identity and accuracy.
+- Reductions (`PerCUDA::Reduce`) use one fixed two-pass tree; the perl engine
+  replays the same order (`replay`), which is what makes float sums
+  identical. Change the CUDA kernel and `replay` together.
+- `random()` must stay integer-only (triple32 chain) in both
+  `CodeGen::CUDA`'s prelude and `PerCUDA::Runtime`; the perl side computes
+  unsigned 32-bit products with `_mul32` to avoid 64-bit overflow.
 - The GPU code is compiled with `--fmad=false`; fused multiply-add would break
   the exact match.
 - The kernel ABI is defined once, in `PerCUDA::Analyzer::kernel_params`; the

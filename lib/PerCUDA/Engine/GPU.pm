@@ -7,6 +7,7 @@ use PerCUDA::Array;
 use PerCUDA::CodeGen::CUDA;
 use PerCUDA::Data qw(is_ndarray);
 use PerCUDA::Compiler;
+use PerCUDA::Reduce;
 
 # Runs the kernel on a GPU: the CUDA C++ from PerCUDA::CodeGen::CUDA is
 # compiled with NVRTC (cached on disk), arrays are converted and copied to
@@ -27,8 +28,17 @@ sub init ($self) {
         precision => $self->{precision},
         cache_dir => $self->{cache_dir},
     );
-    @$self{qw(program from_cache)} = $self->{compiler}->program($self->{source});
+    $self->{kernel} = $self->_program('kernel', $self->{source});
     return;
+}
+
+# A compiled program, from the disk cache when possible:
+# { source, program, from_cache }
+sub _program ($self, $key, $source) {
+    return $self->{programs}{$key} //= do {
+        my ($program, $from_cache) = $self->{compiler}->program($source);
+        { source => $source, program => $program, from_cache => $from_cache };
+    };
 }
 
 sub name ($self) { return 'gpu' }
@@ -53,22 +63,54 @@ sub _buffer ($self, $i, $size) {
     return $self->{buffers}{$i} = $self->{context}->buffer(size => $size);
 }
 
-sub _launch ($self, @launch) {
+sub _launch ($self, $slot, @launch) {
     my $ctx = $self->{context};
-    return $ctx->run($self->{program}, @launch) unless $self->{from_cache};
+    return $ctx->run($slot->{program}, @launch) unless $slot->{from_cache};
 
     # The driver loads a cached image on its first use, so a broken cache
     # entry fails here: compile again and retry once.
-    my $ok  = eval { $ctx->run($self->{program}, @launch); 1 };
+    my $ok  = eval { $ctx->run($slot->{program}, @launch); 1 };
     my $err = $@;
-    $self->{from_cache} = 0;
+    $slot->{from_cache} = 0;
     return if $ok;
     die $err
         unless $err =~
         /CUDA_ERROR_(?:INVALID_IMAGE|INVALID_PTX|INVALID_SOURCE|NO_BINARY_FOR_GPU|UNSUPPORTED_PTX_VERSION)/;
-    $self->{program} = $self->{compiler}->compile($self->{source});
-    $ctx->run($self->{program}, @launch);
+    $slot->{program} = $self->{compiler}->compile($slot->{source});
+    $ctx->run($slot->{program}, @launch);
     return;
+}
+
+# Reduces a device array (see PerCUDA::Reduce). Returns (value, flat index).
+sub reduce ($self, $array, $op) {
+    my $type = $array->{type};
+    my $n    = 1;
+    $n *= $_ for @{ $array->{dims} };
+    return ($op eq 'sum' ? 0 : undef, -1) unless $n;
+
+    my $slot   = $self->_program("reduce_${op}_$type", PerCUDA::Reduce::cuda_source($op, $type));
+    my $blocks = PerCUDA::Reduce::blocks($n);
+    my $acc    = $op eq 'sum' && $type eq 'i' ? 'i64' : $TYPE{$type};
+    my $size   = $acc eq 'i64'                ? 8     : $SIZE{$type};
+    my ($part, $part_idx) =
+        ($self->_buffer('reduce_part', $blocks * $size), $self->_buffer('reduce_part_idx', $blocks * 4));
+    my ($result, $result_idx) = ($self->_buffer('reduce_result', $size), $self->_buffer('reduce_result_idx', 4));
+    my $threads = $PerCUDA::Reduce::THREADS;
+    $self->_launch(
+        $slot,
+        PerCUDA::Reduce::kernel_name($op, $type, 1),
+        [ $array->{buffer}, $part_idx, [ i32 => $n ], $part, $part_idx ],
+        [ $blocks, 1, 1, $threads, 1, 1, 0 ]
+    );
+    $self->_launch(
+        $slot,
+        PerCUDA::Reduce::kernel_name($op, $type, 2),
+        [ $part, $part_idx, [ i32 => $blocks ], $result, $result_idx ],
+        [ 1, 1, 1, $threads, 1, 1, 0 ]
+    );
+    my ($value) = @{ $result->read_array(type => $acc, dims => [1]) };
+    my ($index) = @{ $result_idx->read_array(type => 'i32', dims => [1]) };
+    return ($value, $index);
 }
 
 # Versions of CUDA::DriverAPI before PDL support reject ndarrays as non-array
@@ -92,7 +134,7 @@ sub make_array ($self, $data, $dims, $rank, $type) {
     elsif ($bytes) {
         _ndarray_guard(is_ndarray($data), sub { $buffer->write_array($data, type => $TYPE{$type}, rank => $rank) });
     }
-    return PerCUDA::Array->_new(engine => 'gpu', type => $type, dims => $dims, buffer => $buffer);
+    return PerCUDA::Array->_new(engine => 'gpu', type => $type, dims => $dims, buffer => $buffer, owner => $self);
 }
 
 sub run ($self, @values) {
@@ -149,7 +191,7 @@ sub run ($self, @values) {
     my @block  = @{ $BLOCK{$dim} };
     my @cuda   = map { $_ < $dim ? $grid->[ $dim - 1 - $_ ] : 1 } 0 .. 2;
     my @blocks = map { int(($cuda[$_] + $block[$_] - 1) / $block[$_]) } 0 .. 2;
-    $self->_launch($PerCUDA::CodeGen::CUDA::KERNEL_NAME, \@kernel_args, [ @blocks, @block, 0 ])
+    $self->_launch($self->{kernel}, $PerCUDA::CodeGen::CUDA::KERNEL_NAME, \@kernel_args, [ @blocks, @block, 0 ])
         unless grep { $_ == 0 } @blocks;
 
     my @results;

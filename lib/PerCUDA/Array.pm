@@ -39,6 +39,28 @@ sub get ($self, %args) {
     return $into;
 }
 
+# Reductions over every element, in the same order on both engines (see
+# PerCUDA::Reduce). sum of an int array is exact (64-bit); min and max ignore
+# nan unless every element is nan; argmin and argmax return the index of the
+# first minimum or maximum, outermost first.
+sub sum    ($self) { return ($self->_reduce('sum'))[0] }
+sub min    ($self) { return ($self->_reduce('min'))[0] }
+sub max    ($self) { return ($self->_reduce('max'))[0] }
+sub argmin ($self) { return $self->_index(($self->_reduce('argmin'))[1]) }
+sub argmax ($self) { return $self->_index(($self->_reduce('argmax'))[1]) }
+
+sub _reduce ($self, $op) { return $self->{owner}->reduce($self, $op) }
+
+sub _index ($self, $flat) {
+    return undef if $flat < 0;    ## no critic (ProhibitExplicitReturnUndef)
+    my @index;
+    for my $dim (reverse @{ $self->{dims} }) {
+        unshift @index, $flat % $dim;
+        $flat = int($flat / $dim);
+    }
+    return \@index;
+}
+
 sub _copy ($ref, $rank) {
     return [@$ref] if $rank == 1;
     return [ map { _copy($_, $rank - 1) } @$ref ];
@@ -75,6 +97,11 @@ Created by L<PerCUDA/array>. See there for how runs use it.
 
 Copies the contents back to Perl, as a new nested array or into the given
 nested array or ndarray (an ndarray must have the matching type).
+
+=item C<< $array->sum >>, C<< $array->min >>, C<< $array->max >>, C<< $array->argmin >>, C<< $array->argmax >>
+
+Reductions over every element, computed by the engine that holds the array
+in a fixed order (see L<PerCUDA/array>).
 
 =item C<< $array->type >>, C<< $array->dims >>, C<< $array->engine >>
 

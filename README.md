@@ -146,6 +146,20 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     The same array cannot be passed for two arguments when the kernel writes
     either of them.
 
+    Device arrays also reduce all their elements, on the engine that holds
+    them: `$array->sum`, `$array->min`, `$array->max`,
+    `$array->argmin` and `$array->argmax` (the index of the first
+    minimum or maximum, outermost first, e.g. `[ $i, $j ]`). The order of the
+    operations is fixed, so even floating point sums are identical on both
+    engines (except with `mode => 'fast'`, where perl sums in its own
+    order). Integer sums are exact up to 64 bits; `min` and `max` ignore nan
+    unless every element is nan; reductions of an empty array give 0 (`sum`)
+    or undef.
+
+        my $hit = $runner->array(type => 'i', dims => [$samples]);
+        $runner->run($hit, $seed);              # $hit->[$x] = random(...) < ... ? 1 : 0
+        my $pi = 4 * $hit->sum / $samples;
+
 - `$runner->engine`, `$runner->cuda_source`, `$runner->perl_source`
 
     The engine in use, and the generated CUDA C++ and Perl code.
@@ -166,6 +180,13 @@ cannot declare arrays, hashes or strings.
 of a negative number is nan and `log` of 0 is -inf instead of an error.
 `**` with an integer exponent is repeated multiplication (identical on both
 engines in every mode); with another exponent it is `pow`.
+- `random($seed, $k1, $k2, $k3)` (1 to 4 integer arguments): a uniform
+random number in \[0, 1), with 24 random bits in single and 53 in double
+precision. It is a counter-based generator: the same arguments always give
+the same number, so pass what makes each draw distinct, e.g.
+`random($seed, $x, $y, $step)`. It uses 32-bit integer arithmetic only (a
+chain of Chris Wellons' triple32 hash), so both engines give the same numbers
+in every mode. It is meant for simulations, not for cryptography.
 
 Local variables are typed by inference: a variable is an int unless a float
 value is ever assigned to it. `/` always divides as floating point, as in
@@ -231,6 +252,7 @@ of a process pay for the CUDA initialization (about 0.15 s).
     perl eg/matmul.pl [gpu|perl]
     perl eg/mandelbrot.pl [gpu|perl] [width] [max_iterations] > mandelbrot.pgm
     perl eg/benchmark.pl [gpu|perl] [n]
+    perl eg/pi.pl [gpu|perl] [samples] [seed]       # Monte Carlo: random() and sum
     perl author/bench-life.pl [--size N] [--steps N] [nested|ndarray|device|perl ...]
     perl author/bench-math.pl [--size N] [--perl-size N]    # every mode
 

@@ -60,6 +60,7 @@ usual names, and gitleaks catches the rest. A false positive goes into
 | `lib/PerCUDA/Engine.pm`, `Engine/GPU.pm`, `Engine/Perl.pm` | Running kernels; `PerCUDA::Runtime` helpers of the generated Perl |
 | `lib/PerCUDA/Array.pm` | Arrays kept with an engine between runs (`$runner->array`) |
 | `lib/PerCUDA/Math.pm` | Reproducible math functions for `mode => 'exact'`, rendered to CUDA and Perl |
+| `lib/PerCUDA/Reduce.pm` | Reductions of device arrays: the CUDA kernels and their replay in Perl |
 | `lib/PerCUDA/Data.pm` | Shapes and conversions of nested arrays |
 | `t/` | Tests; `t/lib/PerCUDATest.pm` detects the GPU |
 | `xt/` | Author tests (Perl::Critic, examples) |

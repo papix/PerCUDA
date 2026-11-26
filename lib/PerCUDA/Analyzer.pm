@@ -343,8 +343,9 @@ sub type_of ($self, $e) {
     }
     if ($t eq 'call') {
         my @args = map { $self->type_of($_) } @{ $e->{args} };
-        return $args[0] if $e->{name} eq 'abs';
-        return 'i'      if $e->{name} eq 'int';
+        return $args[0]      if $e->{name} eq 'abs';
+        return 'i'           if $e->{name} eq 'int';
+        return $self->{real} if $e->{name} eq 'random';
         return type_max($self->{real}, @args);    # sqrt, exp, log, sin, cos, floor, ceil, atan2
     }
     if ($t eq 'bin') {

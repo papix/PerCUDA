@@ -42,6 +42,27 @@ static __device__ inline double percuda_powi_d(double x, int n) {
     return n < 0 ? 1.0 / r : r;
 }
 static __device__ inline int percuda_abs_i(int x) { return x < 0 ? -x : x; }
+/* random(): a counter-based generator; PerCUDA::Runtime::random_* is the same */
+static __device__ inline unsigned int percuda_mix(unsigned int x) {    /* triple32 (Chris Wellons) */
+    x ^= x >> 17; x *= 0xed5ad4bbu; x ^= x >> 11; x *= 0xac4c1b51u; x ^= x >> 15; x *= 0x31848babu; x ^= x >> 14;
+    return x;
+}
+static __device__ inline unsigned int percuda_hash(int n, int k0, int k1, int k2, int k3) {
+    unsigned int h = percuda_mix(0x9e3779b9u + (unsigned int)n);
+    h = percuda_mix(h ^ (unsigned int)k0);
+    if (n > 1) h = percuda_mix(h ^ (unsigned int)k1);
+    if (n > 2) h = percuda_mix(h ^ (unsigned int)k2);
+    if (n > 3) h = percuda_mix(h ^ (unsigned int)k3);
+    return h;
+}
+static __device__ inline float percuda_random_f(int n, int k0, int k1, int k2, int k3) {
+    return (float)(percuda_hash(n, k0, k1, k2, k3) >> 8) * 5.9604644775390625e-08f;    /* 2^-24 */
+}
+static __device__ inline double percuda_random_d(int n, int k0, int k1, int k2, int k3) {
+    unsigned int h = percuda_hash(n, k0, k1, k2, k3);
+    unsigned int l = percuda_mix(h ^ 0x85ebca6bu);
+    return ((double)(h >> 5) * 67108864.0 + (double)(l >> 6)) * 1.1102230246251565e-16;    /* 2^-53 */
+}
 C
 
 # mode => 'exact' uses PerCUDA::Math instead of CUDA's math functions, so that
@@ -216,6 +237,11 @@ sub _call ($self, $e) {
         return "$fn(" . $self->_expr($arg) . ')';
     }
     return $self->_cast('i', $arg) if $e->{name} eq 'int';
+    if ($e->{name} eq 'random') {
+        my @keys = map { $self->_cast('i', $_) } @{ $e->{args} };
+        push @keys, '0' while @keys < 4;
+        return "percuda_random_$type(" . scalar(@{ $e->{args} }) . ', ' . join(', ', @keys) . ')';
+    }
 
     # floor and ceil are exact; exp, log, sin, cos and atan2 come from CUDA
     # (fastest) or from PerCUDA::Math (reproducible by the perl engine)

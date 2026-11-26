@@ -19,8 +19,9 @@ sub run_example (@command) {
 for my $engine (@engines) {
     like run_example("$eg/matmul.pl", $engine), qr/engine: $engine\n30 36 42\n66 81 96\n102 126 150\n/,
         "matmul.pl ($engine)";
-    like run_example("$eg/mandelbrot.pl", $engine, 32, 16), qr/\AP2\n32 32\n255\n/, "mandelbrot.pl ($engine)";
-    like run_example("$eg/benchmark.pl", $engine, 16), qr/engine=$engine n=16 round=1: .* \(c\[1\]\[2\]=\d+\)/,
+    like run_example("$eg/mandelbrot.pl", $engine, 32,    16), qr/\AP2\n32 32\n255\n/, "mandelbrot.pl ($engine)";
+    like run_example("$eg/pi.pl",         $engine, 20000, 1),  qr/engine: $engine\npi = 3\.1/, "pi.pl ($engine)";
+    like run_example("$eg/benchmark.pl",  $engine, 16), qr/engine=$engine n=16 round=1: .* \(c\[1\]\[2\]=\d+\)/,
         "benchmark.pl ($engine)";
 }
 
