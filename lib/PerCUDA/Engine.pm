@@ -1,5 +1,6 @@
 package PerCUDA::Engine;
 use v5.40;
+use List::Util   ();
 use Carp         ();
 use Scalar::Util qw(blessed refaddr);
 use PerCUDA::Array;
@@ -37,9 +38,11 @@ sub storage ($class, %args) {
 sub init_storage ($self) { }
 
 # The error of check => 1, the same on both engines.
+# $thread: [ name => index, ... ] per axis, the names the kernel gives the
+# thread index (undef where it declares none).
 sub out_of_range ($name, $line, $thread, $axis, $index, $size) {
-    my @axes  = qw(x y z);
-    my $where = join ', ', map { "\$$axes[$_]=$thread->[$_]" } 0 .. $#$thread;
+    my @pairs = List::Util::pairs(@$thread);
+    my $where = join ', ', map { defined $_->[0] ? "\$$_->[0]=$_->[1]" : $_->[1] } @pairs;
     Carp::croak("PerCUDA: index out of range at kernel line $line: \$$name, dimension $axis, index $index"
             . ' is not in 0 .. '
             . ($size - 1)

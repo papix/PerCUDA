@@ -15,7 +15,7 @@ use PerCUDA::Data qw(type_code);
 # PerCUDA::CodeGen::Perl) and the engines work from its result.
 
 our @EXPORT_OK =
-    qw(walk infer_types infer_dim substitute_constants is_pure assigned_symbols nonneg_int_literal type_max error);
+    qw(walk infer_types index_dim substitute_constants is_pure assigned_symbols nonneg_int_literal type_max error);
 
 my %RANK         = (i => 0, f => 1, d => 2);
 my @TYPE_BY_RANK = qw(i f d);
@@ -41,6 +41,12 @@ sub ast  ($self) { return $self->{ast} }
 sub dim  ($self) { return $self->{dim} }
 sub real ($self) { return $self->{real} }
 sub axes ($self) { return @AXES[ 0 .. $self->{dim} - 1 ] }
+
+# The names the kernel gives the thread index, one per axis (undef where it
+# declares none).
+sub thread_names ($self) {
+    return [ map { $self->{thread_names}[$_] } 0 .. $self->{dim} - 1 ];
+}
 
 # [ { name, type, kind => array|scalar|unused, rank, read, written, covered } ] in declaration order.
 # covered: the array is never read and every thread stores into its own
@@ -146,23 +152,28 @@ sub infer_types ($ast, $names, $real, $int_names = {}) {
     return { map { $_ => (!$array{$_} && $int{$_} ? 'i' : $real) } @$names };
 }
 
-# Number of grid axes a kernel uses when dim is not given: 3 with $z or
-# $size_z, 2 with $y or $size_y, otherwise 1. Names the kernel declares (my,
-# loop variables) or takes as arguments are its own variables, not axes.
-sub infer_dim ($ast, $argument_names) {
-    my %own = map { $_ => 1 } @$argument_names;
-    my %used;
+# Number of grid axes the kernel declares with my (...) = thread_index()
+# or my (...) = grid_size() (undef without either). Each may appear once,
+# among the top-level statements, and both must give the same number.
+sub index_dim ($ast) {
+    my %top = map { refaddr $_ => 1 } grep { $_->{t} eq 'index' } @{ $ast->{body} };
+    my %found;
     walk(
         $ast,
         sub ($n) {
-            $own{ $n->{name} }  = 1 if $n->{t} eq 'my' || $n->{t} eq 'foreach';
-            $used{ $n->{name} } = 1 if $n->{t} eq 'var';
+            return unless $n->{t} eq 'index';
+            my $func = $n->{what} eq 'thread' ? 'thread_index()' : 'grid_size()';
+            error("my (...) = $func must be a top-level statement of the kernel", $n) unless $top{ refaddr $n };
+            error("$func is called twice",                                        $n) if $found{ $n->{what} };
+            $found{ $n->{what} } = $n;
         }
     );
-    my $uses = sub ($axis) {
-        grep { $used{$_} && !$own{$_} } $axis, "size_$axis";
-    };
-    return $uses->('z') ? 3 : $uses->('y') ? 2 : 1;
+    my ($thread, $grid) = @found{qw(thread grid)};
+    error("thread_index() gives " . @{ $thread->{names} } . " value(s) but grid_size() gives " . @{ $grid->{names} },
+        $grid)
+        if $thread && $grid && @{ $thread->{names} } != @{ $grid->{names} };
+    my $decl = $thread // $grid;
+    return $decl ? scalar @{ $decl->{names} } : undef;
 }
 
 # Replaces each $NAME of %$constants in the kernel with its value, an int
@@ -174,7 +185,6 @@ sub substitute_constants ($ast, $constants, $barewords = {}) {
         $named{$name} = 1 if exists $constants->{$name};
         my $value = exists $constants->{$name} ? $constants->{$name} : $barewords->{$name};
         error("constant name '$name' is invalid") unless $name =~ /\A[A-Za-z_]\w*\z/;
-        error("constant name '$name' is reserved") if $name    =~ /\A(?:size_)?[xyz]\z/;
         error("constant '$name' must be a finite number")
             unless defined $value
             && !ref $value
@@ -189,6 +199,9 @@ sub substitute_constants ($ast, $constants, $barewords = {}) {
         sub ($n) {
             error("constant \$$n->{name} cannot be declared", $n)
                 if ($n->{t} eq 'my' || $n->{t} eq 'foreach') && $named{ $n->{name} };
+            if ($n->{t} eq 'index') {
+                $named{$_} && error("constant \$$_ cannot be declared", $n) for @{ $n->{names} };
+            }
             my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
             error("constant \$$target->{name} cannot be assigned", $n)
                 if $target && $target->{t} eq 'var' && $named{ $target->{name} };
@@ -269,7 +282,6 @@ sub _analyze_arguments ($self) {
         error("argument '$name' is declared twice") if $seen{$name}++;
         my $type = type_code($type_name)
             // error("argument '$name' has unknown type '" . ($type_name // '') . "' (use int, float or double)");
-        error("argument name '$name' is reserved") if $self->_is_builtin_name($name);
         push @args,
             {
             name    => $name,
@@ -287,24 +299,14 @@ sub _analyze_arguments ($self) {
     return;
 }
 
-sub _is_builtin_name ($self, $name) {
-    for my $axis ($self->axes) {
-        return 1 if $name eq $axis || $name eq "size_$axis";
-    }
-    return 0;
-}
-
 # ---- scope resolution ----
 
 sub _new_symbol ($self, %args) { return { type => 'i', %args } }
 
 sub _resolve ($self) {
     my %global;
-    for my $axis ($self->axes) {
-        $global{$axis} = $self->_new_symbol(name => $axis, cname => "percuda_$axis", fixed => 1);
-        push @{ $self->{thread_syms} }, $global{$axis};
-        $global{"size_$axis"} = $self->_new_symbol(name => "size_$axis", cname => "percuda_size_$axis", fixed => 1);
-    }
+    $self->{thread_syms}  = [];
+    $self->{thread_names} = [];
     for my $arg (@{ $self->{args} }) {
         next if $arg->{kind} eq 'unused';
         $global{ $arg->{name} } = $self->_new_symbol(
@@ -326,7 +328,11 @@ sub _lookup ($self, $name, $node) {
     for my $scope (reverse @{ $self->{scopes} }) {
         return $scope->{$name} if $scope->{$name};
     }
-    error("variable \$$name is not declared (declare it with my)", $node);
+    my $hint =
+          $name =~ /\A[xyz]\z/      ? "; the thread index comes from my (\$x, ...) = thread_index()"
+        : $name =~ /\Asize_[xyz]\z/ ? "; the grid size comes from my (\$size_x, ...) = grid_size()"
+        :                             '';
+    error("variable \$$name is not declared (declare it with my$hint)", $node);
 }
 
 sub _declare ($self, $node) {
@@ -354,6 +360,21 @@ sub _resolve_stmt ($self, $s) {
     }
     elsif ($t eq 'expr') {
         $self->_resolve_expr($s->{e});
+    }
+    elsif ($t eq 'index') {    # my ($x, $y) = thread_index(); (see index_dim)
+        my @names = @{ $s->{names} };
+        error("my (...) = thread_index() gives " . @names . " value(s) but the grid has $self->{dim} dimension(s)", $s)
+            if @names != $self->{dim};
+        for my $axis (0 .. $#names) {
+            my $name = $names[$axis];
+            error("\$$name has the name of an argument", $s) if $self->{scopes}[0]{$name};
+            my $cname = $s->{what} eq 'thread' ? "percuda_$AXES[$axis]" : "percuda_size_$AXES[$axis]";
+            my $sym   = $self->_new_symbol(name => $name, cname => $cname, fixed => 1);
+            $self->{scopes}[-1]{$name} = $sym;
+            next unless $s->{what} eq 'thread';
+            $self->{thread_syms}[$axis]  = $sym;
+            $self->{thread_names}[$axis] = $name;
+        }
     }
     elsif ($t eq 'block') {
         $self->_resolve_block($s, 1);
@@ -520,7 +541,7 @@ sub _analyze_writes ($self) {
     my $moved  = assigned_symbols($self->{ast});
     my $fixed  = !grep { $moved->{ refaddr $_ } } @thread;    # $x, $y, $z are never assigned
 
-    my $is_thread_var = sub ($e, $axis) { $e->{t} eq 'var' && $e->{sym} == $thread[$axis] };
+    my $is_thread_var = sub ($e, $axis) { $e->{t} eq 'var' && $thread[$axis] && $e->{sym} == $thread[$axis] };
 
     my $own_rows = $fixed;
     walk(

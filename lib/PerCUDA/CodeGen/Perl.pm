@@ -61,6 +61,7 @@ sub _block ($self, $block, $level) {
 sub _stmt ($self, $s, $level) {
     my $ind = _ind($level);
     my $t   = $s->{t};
+    return '' if $t eq 'index';    # the thread index and grid size are set before the body
     if ($t eq 'my') {
         my $init = $s->{init} ? $self->_cast($s->{sym}{type}, $s->{init}) : '0';
         return "${ind}my \$$s->{sym}{cname} = $init;\n";
@@ -182,7 +183,10 @@ sub _expr ($self, $e) {
     return "\$$e->{sym}{cname}" if $t eq 'var';
     if ($t eq 'elem') {
         if ($self->{check}) {    # a reference to the element, after checking every index
-            my $thread = join ', ', map { "\$percuda_$_" } $an->axes;
+            my @names  = @{ $an->thread_names };
+            my @axes   = $an->axes;
+            my $thread = join ', ',
+                map { (defined $names[$_] ? "'$names[$_]'" : 'undef') . ", \$percuda_$axes[$_]" } 0 .. $#axes;
             return
                   "\${ PerCUDA::Runtime::at(\$v_$e->{name}, '$e->{name}', "
                 . ($e->{line} // 0)

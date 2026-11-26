@@ -151,6 +151,7 @@ sub _block ($self, $block, $level) {
 sub _stmt ($self, $s, $level) {
     my $ind = _ind($level);
     my $t   = $s->{t};
+    return '' if $t eq 'index';    # the thread index and grid size are set before the body
     if ($t eq 'my') {
         my $type = $s->{sym}{type};
         my $init = $s->{init} ? $self->_cast($type, $s->{init}) : '0';

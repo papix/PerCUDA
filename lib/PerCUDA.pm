@@ -6,7 +6,7 @@ use Symbol        ();
 use Scalar::Util  qw(looks_like_number);
 use PerCUDA::Data ();
 use PerCUDA::Parser;
-use PerCUDA::Analyzer qw(infer_dim infer_types);
+use PerCUDA::Analyzer qw(index_dim infer_types);
 use PerCUDA::CodeGen::CUDA;
 use PerCUDA::CodeGen::Perl;
 use PerCUDA::Engine::Perl;
@@ -102,7 +102,13 @@ sub new ($class, %args) {
     # A context's constant whose name the kernel uses for an argument or a
     # variable of its own only replaces the bareword.
     my %own = map { $_->[0] => 1 } @arguments;
-    PerCUDA::Analyzer::walk($ast, sub ($n) { $own{ $n->{name} } = 1 if $n->{t} eq 'my' || $n->{t} eq 'foreach' });
+    PerCUDA::Analyzer::walk(
+        $ast,
+        sub ($n) {
+            $own{ $n->{name} } = 1 if $n->{t} eq 'my' || $n->{t} eq 'foreach';
+            $own{$_} = 1 for $n->{t} eq 'index' ? @{ $n->{names} } : ();
+        }
+    );
     my %shared_bare = map { $_ => $shared_constant{$_} } grep { $own{$_} } keys %shared_constant;
     $constants = { (map { $_ => $shared_constant{$_} } grep { !$own{$_} } keys %shared_constant), %$constants };
     my $barewords =
@@ -129,8 +135,14 @@ sub new ($class, %args) {
         my ($pair) = grep { $_->[0] eq $size } @arguments;
         $size = [$size] if $pair && (PerCUDA::Data::type_code($pair->[1]) // '') eq 'i' && _used_as_scalar($ast, $size);
     }
-    my $dim = $args{dim} // (ref $size ? scalar @$size : infer_dim($ast, [ map { $_->[0] } @arguments ]));
-    Carp::croak("PerCUDA: size gives " . @$size . " dimension(s) but dim is $dim") if ref $size && @$size != $dim;
+
+    # The grid has as many dimensions as my (...) = thread_index() declares.
+    Carp::croak("PerCUDA: dim is not an option; the kernel's my (\$x, ...) = thread_index() gives the dimensions")
+        if exists $args{dim};
+    my $declared = index_dim($ast);
+    my $dim      = $declared // (ref $size ? scalar @$size : 1);
+    Carp::croak("PerCUDA: size gives " . @$size . " dimension(s) but thread_index() gives $dim")
+        if ref $size && @$size != $dim;
 
     my $an  = PerCUDA::Analyzer->new(ast => $ast, dim => $dim, arguments => \@arguments, precision => $precision);
     my %arg = map { $_->{name} => $_ } @{ $an->args };
