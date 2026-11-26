@@ -4,20 +4,27 @@ use Carp ();
 use Exporter 'import';
 use Scalar::Util qw(blessed);
 
-our @EXPORT_OK = qw(shape zeros copy_array convert_array is_ndarray check_ndarray_type);
+our @EXPORT_OK = qw(shape zeros copy_array convert_array is_ndarray ndarray_has_type type_code type_name);
 
 # PDL type of each PerCUDA type. PDL itself is never loaded here: an ndarray
 # can only arrive when the caller has loaded it.
 my %PDL_TYPE = (i => 'long', f => 'float', d => 'double');
 
+# Type names: int, float and double, or i, f and d for short. Internally
+# PerCUDA uses the short codes.
+my %TYPE_CODE = (int => 'i',   float => 'f',     double => 'd', i => 'i', f => 'f', d => 'd');
+my %TYPE_NAME = (i   => 'int', f     => 'float', d => 'double');
+
+# The code (i, f or d) of a type name, or undef if it is not one.
+sub type_code ($name) { return defined $name && !ref $name ? $TYPE_CODE{$name} : undef }
+
+# The name (int, float or double) of a type code.
+sub type_name ($code) { return $TYPE_NAME{$code} // $code }
+
 sub is_ndarray ($value) { return blessed $value && $value->isa('PDL') }
 
-sub check_ndarray_type ($ndarray, $type, $name) {
-    Carp::croak(
-        "PerCUDA: ndarray '$name' must be of type $PDL_TYPE{$type} to receive the result, not " . $ndarray->type)
-        unless $ndarray->type eq $PDL_TYPE{$type};
-    return;
-}
+# Whether an ndarray holds the PerCUDA type $type (long, float or double).
+sub ndarray_has_type ($ndarray, $type) { return $ndarray->type eq $PDL_TYPE{$type} }
 
 # Dimensions of a rectangular nested array, following the first element down
 # to $rank levels, outermost first. For a PDL ndarray this is the reverse of

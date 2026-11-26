@@ -1,16 +1,21 @@
 package PerCUDA::Analyzer;
 use v5.40;
 use Carp ();
+
+# Errors point at the caller of PerCUDA->new (or of a :GPU sub).
+our @CARP_NOT = qw(PerCUDA PerCUDA::Kernel PerCUDA::Context);
 use Exporter 'import';
-use List::Util   qw(max);
-use Scalar::Util qw(refaddr);
+use List::Util    qw(max);
+use Scalar::Util  qw(refaddr);
+use PerCUDA::Data qw(type_code);
 
 # Semantic analysis of a kernel AST (PerCUDA::Parser): decides whether each
 # argument is an array or a scalar, resolves variables to symbols and infers
 # the type of every local. The code generators (PerCUDA::CodeGen::CUDA and
 # PerCUDA::CodeGen::Perl) and the engines work from its result.
 
-our @EXPORT_OK = qw(walk is_pure assigned_symbols nonneg_int_literal type_max error);
+our @EXPORT_OK =
+    qw(walk infer_types infer_dim substitute_constants is_pure assigned_symbols nonneg_int_literal type_max error);
 
 my %RANK         = (i => 0, f => 1, d => 2);
 my @TYPE_BY_RANK = qw(i f d);
@@ -72,6 +77,145 @@ sub walk ($node, $cb) {
     return;
 }
 
+# Default types of arguments given without one: int for a scalar used where
+# CUDA needs an integer (an index, an operand of % or a bit operation, an
+# argument of random(), the bound of a loop over an int, a size), otherwise
+# $real (float or double, from precision). %$int_names are int as well.
+sub infer_types ($ast, $names, $real, $int_names = {}) {
+    my %int = %$int_names;
+    my $through;
+    $through = sub ($e) {    # through + - * % and bit operations only
+        return unless $e;
+        my $t = $e->{t};
+        if    ($t eq 'var')                                          { $int{ $e->{name} } = 1 }
+        elsif ($t eq 'bin' && $e->{op} =~ /\A(?:[-+*%&|^]|<<|>>)\z/) { $through->($e->{l}); $through->($e->{r}) }
+        elsif ($t eq 'un' && $e->{op} =~ /\A[-~]\z/)                 { $through->($e->{e}) }
+        elsif ($t eq 'cond')                                         { $through->($e->{a}); $through->($e->{b}) }
+        return;
+    };
+    my $mark = sub ($e) {    # not an expression with a float literal
+        return unless $e;
+        my $float = 0;
+        walk($e, sub ($n) { $float = 1 if $n->{t} eq 'num' && $n->{float} });
+        $through->($e) unless $float;
+        return;
+    };
+    walk(
+        $ast,
+        sub ($n) {
+            my $t = $n->{t};
+            if    ($t eq 'elem')                                          { $mark->($_) for @{ $n->{idx} } }
+            elsif ($t eq 'bin' && $n->{op} =~ /\A(?:[%&|^]|<<|>>)\z/)     { $mark->($n->{l}); $mark->($n->{r}) }
+            elsif ($t eq 'un' && $n->{op} eq '~')                         { $mark->($n->{e}) }
+            elsif ($t eq 'assign' && $n->{op} =~ /\A(?:[%&|^]|<<|>>)=\z/) { $mark->($n->{rhs}) }
+            elsif ($t eq 'call' && $n->{name} eq 'random')                { $mark->($_) for @{ $n->{args} } }
+            elsif ($t eq 'foreach')                                       { $mark->($n->{from}); $mark->($n->{to}) }
+            elsif ($t eq 'for' && $n->{init} && $n->{init}{t} eq 'my' && $n->{cond} && $n->{cond}{t} eq 'bin') {
+
+                # for (my $i = <int>; $i < BOUND; ...): BOUND is an int
+                my ($init, $cond) = ($n->{init}{init}, $n->{cond});
+                my $i = $n->{init}{name};
+                return unless $init && $init->{t} eq 'num' && !$init->{float};
+                for ([ $cond->{l}, $cond->{r} ], [ $cond->{r}, $cond->{l} ]) {
+                    $mark->($_->[1]) if $_->[0]{t} eq 'var' && $_->[0]{name} eq $i;
+                }
+            }
+        }
+    );
+
+    # A local that must be an int passes it on to what is assigned to it
+    # (my $row = $x * $w; ... $a->[$row]: $w is an int).
+    my %assigned;
+    walk(
+        $ast,
+        sub ($n) {
+            push @{ $assigned{ $n->{name} } }, $n->{init} if $n->{t} eq 'my' && $n->{init};
+            push @{ $assigned{ $n->{lhs}{name} } }, $n->{rhs}
+                if $n->{t} eq 'assign' && $n->{lhs}{t} eq 'var' && $n->{op} =~ /\A(?:[-+*]?=)\z/;
+        }
+    );
+    my %passed;
+    while (my @new = grep { $int{$_} && !$passed{$_} && $assigned{$_} } keys %int) {
+        for my $name (@new) {
+            $passed{$name} = 1;
+            $mark->($_) for @{ $assigned{$name} };
+        }
+    }
+    my %array;
+    walk($ast, sub ($n) { $array{ $n->{name} } = 1 if $n->{t} eq 'elem' });
+    return { map { $_ => (!$array{$_} && $int{$_} ? 'i' : $real) } @$names };
+}
+
+# Number of grid axes a kernel uses when dim is not given: 3 with $z or
+# $size_z, 2 with $y or $size_y, otherwise 1. Names the kernel declares (my,
+# loop variables) or takes as arguments are its own variables, not axes.
+sub infer_dim ($ast, $argument_names) {
+    my %own = map { $_ => 1 } @$argument_names;
+    my %used;
+    walk(
+        $ast,
+        sub ($n) {
+            $own{ $n->{name} }  = 1 if $n->{t} eq 'my' || $n->{t} eq 'foreach';
+            $used{ $n->{name} } = 1 if $n->{t} eq 'var';
+        }
+    );
+    my $uses = sub ($axis) {
+        grep { $used{$_} && !$own{$_} } $axis, "size_$axis";
+    };
+    return $uses->('z') ? 3 : $uses->('y') ? 2 : 1;
+}
+
+# Replaces each $NAME of %$constants in the kernel with its value, an int
+# literal when the value is an integer in 32-bit range, otherwise a float one.
+sub substitute_constants ($ast, $constants, $barewords = {}) {
+    my (%literal, %named);    # %named: also replaces $NAME (constant => { ... })
+    for my $name (sort(keys %$constants), sort(keys %$barewords)) {
+        next if $literal{$name};
+        $named{$name} = 1 if exists $constants->{$name};
+        my $value = exists $constants->{$name} ? $constants->{$name} : $barewords->{$name};
+        error("constant name '$name' is invalid") unless $name =~ /\A[A-Za-z_]\w*\z/;
+        error("constant name '$name' is reserved") if $name    =~ /\A(?:size_)?[xyz]\z/;
+        error("constant '$name' must be a finite number")
+            unless defined $value
+            && !ref $value
+            && $value =~ /\A\s*[-+]?(?:\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+(?:[eE][-+]?\d+)?)\s*\z/
+            && abs($value) < 9**9**9;
+        my $int = $value =~ /\A\s*[-+]?\d+\s*\z/ && $value > -2**31 && $value < 2**31;    # -2**31 has no positive literal
+        my $num = { t => 'num', value => abs($value + 0), float => $int ? 0 : 1 };
+        $literal{$name} = $value < 0 ? { t => 'un', op => '-', e => $num } : $num;
+    }
+    walk(
+        $ast,
+        sub ($n) {
+            error("constant \$$n->{name} cannot be declared", $n)
+                if ($n->{t} eq 'my' || $n->{t} eq 'foreach') && $named{ $n->{name} };
+            my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
+            error("constant \$$target->{name} cannot be assigned", $n)
+                if $target && $target->{t} eq 'var' && $named{ $target->{name} };
+            error("constant \$$n->{name} cannot be indexed", $n) if $n->{t} eq 'elem' && $named{ $n->{name} };
+        }
+    );
+    walk(
+        $ast,
+        sub ($n) {
+            error("unknown name '$n->{name}' (not a function or a constant)", $n)
+                if $n->{t} eq 'const' && !$literal{ $n->{name} };
+            return unless $n->{t} eq 'const' || ($n->{t} eq 'var' && $named{ $n->{name} });
+            my $literal = $literal{ $n->{name} } or return;
+            %$n = (%$literal, $literal->{e} ? (e => { %{ $literal->{e} } }) : (), line => $n->{line});
+        }
+    );
+    return;
+}
+
+# Names of the barewords (constants) used in a kernel.
+sub constant_names ($ast) {
+    my %name;
+    walk($ast, sub ($n) { $name{ $n->{name} } = 1 if $n->{t} eq 'const' });
+    my @names = sort keys %name;
+    return @names;
+}
+
 sub is_pure ($e) {
     my $pure = 1;
     walk($e, sub ($n) { $pure = 0 if $n->{t} eq 'assign' || $n->{t} eq 'pre' || $n->{t} eq 'post' });
@@ -120,11 +264,11 @@ sub _analyze_arguments ($self) {
     my %seen;
     my @args;
     for my $pair (@{ $self->{arguments} }) {
-        my ($name, $type) = @$pair;
+        my ($name, $type_name) = @$pair;
         error("argument name '$name' is invalid") unless defined $name && $name =~ /\A[A-Za-z_]\w*\z/;
         error("argument '$name' is declared twice") if $seen{$name}++;
-        error("argument '$name' has unknown type '" . ($type // '') . "' (use i, f or d)")
-            unless defined $type && exists $RANK{$type};
+        my $type = type_code($type_name)
+            // error("argument '$name' has unknown type '" . ($type_name // '') . "' (use int, float or double)");
         error("argument name '$name' is reserved") if $self->_is_builtin_name($name);
         push @args,
             {
@@ -288,6 +432,9 @@ sub _resolve_expr ($self, $e) {
     }
     elsif ($t eq 'call') {
         $self->_resolve_expr($_) for @{ $e->{args} };
+    }
+    elsif ($t eq 'const') {
+        error("unknown name '$e->{name}' (not a function or a constant)", $e);
     }
     elsif ($t ne 'num') {
         error("unsupported expression '$t'");
