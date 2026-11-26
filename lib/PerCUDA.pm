@@ -840,7 +840,7 @@ the grid size with C<grid_size()>, as Numba's C<cuda.grid(2)> and
 C<cuda.gridsize(2)> or Warp's C<wp.tid()> do. The number of variables
 (1 to 3) is the number of dimensions of the grid; when both appear, they
 must give the same number. Each may appear once, as a statement of its own
-at the top level of the kernel (not inside a block or a C<for> initializer),
+at the top level of the kernel (not inside a block or the first part of a C-style C<for>),
 and the variables exist from there on. Any names will do, but not those of
 arguments, and each name is declared once (a later C<my> of the same name,
 or the same name in both declarations, is an error); the last one runs along CUDA's x axis
