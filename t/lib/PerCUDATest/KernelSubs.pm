@@ -1,6 +1,6 @@
 package PerCUDATest::KernelSubs;
 use v5.40;
-use PerCUDA ':kernel';
+use PerCUDA;
 
 # :GPU subs in a module loaded through @INC (t/16_gpu_attribute.t).
 

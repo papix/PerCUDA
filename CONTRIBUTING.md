@@ -54,7 +54,7 @@ usual names, and gitleaks catches the rest. A false positive goes into
 | --- | --- |
 | `lib/PerCUDA.pm` | `new`/`run`, engine selection, user documentation (POD) |
 | `lib/PerCUDA/Context.pm` | `PerCUDA->context`: shared options, arrays without a kernel |
-| `lib/PerCUDA/Kernel.pm` | `use PerCUDA ':kernel'`: `:GPU` subs, read from their source file |
+| `lib/PerCUDA/Kernel.pm` | `use PerCUDA`: `:GPU` subs, read from their source file |
 | `lib/PerCUDA/Parser.pm` | Tokenizer and parser of the kernel language |
 | `lib/PerCUDA/Analyzer.pm` | Argument kinds, scopes, type inference, kernel ABI |
 | `lib/PerCUDA/CodeGen/CUDA.pm`, `Perl.pm` | Code for NVRTC and for the perl engine |

@@ -3,7 +3,7 @@ use v5.40;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Time::HiRes qw(time);
-use PerCUDA     qw(:kernel configure runner);
+use PerCUDA     qw(configure runner);
 
 my ($engine, $width, $max) = @ARGV;
 $width //= 1024;

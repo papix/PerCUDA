@@ -11,12 +11,12 @@ use PerCUDA::Analyzer;
 our @CARP_NOT = qw(PerCUDA PerCUDA::Engine attributes);
 
 # Kernels written as ordinary subs with the :GPU attribute
-# (use PerCUDA ':kernel'). The attribute handler reads the body of the sub
+# (use PerCUDA). The attribute handler reads the body of the sub
 # from its source file and replaces the sub with one that runs it as a
 # kernel; the runner is built on the first call.
 
 # The thread index and grid size, shared with every package that imports
-# :kernel, so that kernel subs compile under strict. Only kernels see their
+# PerCUDA, so that kernel subs compile under strict. Only kernels see their
 # values (the sub itself never runs as Perl).
 our ($x, $y, $z, $size_x, $size_y, $size_z);
 my %THREAD_VAR = (x => \$x, y => \$y, z => \$z, size_x => \$size_x, size_y => \$size_y, size_z => \$size_z);
@@ -270,7 +270,7 @@ PerCUDA::Kernel - Kernels written as subs with the :GPU attribute
 
 =head1 SYNOPSIS
 
-    use PerCUDA ':kernel';
+    use PerCUDA;
 
     sub add :GPU(float, float, float) ($a, $b, $out) {
         $out->[$x][$y] = $a->[$x][$y] + $b->[$x][$y];
@@ -280,6 +280,6 @@ PerCUDA::Kernel - Kernels written as subs with the :GPU attribute
 
 =head1 DESCRIPTION
 
-The implementation of C<use PerCUDA ':kernel'>; see L<PerCUDA/KERNEL SUBS>.
+The import of C<use PerCUDA>; see L<PerCUDA/KERNEL SUBS>.
 
 =cut

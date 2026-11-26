@@ -10,7 +10,7 @@ use v5.40;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Time::HiRes qw(time);
-use PerCUDA     qw(:kernel configure array runner);
+use PerCUDA     qw(configure array runner);
 
 my ($engine, $n, $seed) = @ARGV;
 $n    //= 8_000_000;
