@@ -796,7 +796,7 @@ C<perl -e> or a string C<eval>; see L</STRING KERNELS>); it never runs as
 Perl, so it cannot see variables outside the sub (pass them as arguments, or
 use constants). C<use PerCUDA> enables the C<:GPU> attribute in the calling
 package and imports C<thread_index> and C<grid_size> into it, so that the
-body compiles under C<strict> (called outside a kernel, they die);
+body compiles under C<strict> (called outside a kernel, they die; a sub of the package by either name is kept);
 C<use PerCUDA ()> does neither. The runner of a C<:GPU> sub is built on the first
 call; kernel line numbers in errors are lines of the file.
 C<< runner(\&scale) >> returns it, e.g. for C<< ->array >>,

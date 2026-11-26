@@ -46,6 +46,19 @@ sub generate ($self) {
         $range = "\$percuda_xs ? \@\$percuda_xs : ($range)" if $i == 0;
         $out .= _ind($level++) . "${label}for my \$percuda_$axes[$i] ($range) {\n";
     }
+
+    # A kernel that assigns its thread index or grid size variables gets its
+    # own copies, as each GPU thread has (the loops must not see the change).
+    my %moved;
+    walk(
+        $an->ast,
+        sub ($n) {
+            my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
+            $moved{ $target->{sym}{cname} } = 1
+                if $target && $target->{t} eq 'var' && $target->{sym}{cname} =~ /\Apercuda_(?:size_)?[xyz]\z/;
+        }
+    );
+    $out .= _ind($level) . "my \$$_ = \$$_;\n" for sort keys %moved;
     $out .= join '', map { $self->_stmt($_, $level) } @{ $an->ast->{body} };
     $out .= _ind(--$level) . "}\n" for @axes;
     return $out . "    return;\n}\n";

@@ -33,7 +33,12 @@ my %CONFIG;    # package => PerCUDA::Context from PerCUDA::configure
 my @KEEP;    # the :GPU subs, alive for the life of the process (the hashes above use their addresses)
 
 sub import_into ($class, $package) {
-    *{ qualify_to_ref($_, $package) } = $INDEX_FUNCTION{$_} for sort keys %INDEX_FUNCTION;
+
+    # A sub of the package's own by that name stays (kernels never call it).
+    for my $func (sort keys %INDEX_FUNCTION) {
+        my $glob = qualify_to_ref($func, $package);
+        *$glob = $INDEX_FUNCTION{$func} unless *$glob{CODE};
+    }
     my $next = $package->can('MODIFY_CODE_ATTRIBUTES');    # another attribute handler, if any
     no warnings 'redefine';
     *{ qualify_to_ref("MODIFY_CODE_ATTRIBUTES", $package) } = sub ($pkg, $cv, @attrs) {

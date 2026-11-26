@@ -16,6 +16,11 @@ package Thread::Kernel {
     }
 }
 
+package Own::Grid {
+    sub grid_size { return 'own' }
+    use PerCUDA;
+}
+
 my sub run_kernel ($engine, $source, $argument, @values) {
     my $runner = PerCUDA->new(engine => $engine, source => $source, argument => $argument);
     return $runner->run(@values);
@@ -63,6 +68,28 @@ for my $engine (both_engines()) {
             ),
             [ 0, 1 ], 'an inner my shadows the index';
 
+        # Each thread has its own copies: assigning them changes no other thread.
+        my $grid = [ [ 0, 0, 0 ], [ 0, 0, 0 ] ];
+        is run_kernel(
+            $engine,
+            'my ($i, $j) = thread_index(); $out->[$i][$j] = $i * 10 + $j; $i = 0; $j = 0;',
+            [ out => 'int' ], $grid
+            ),
+            [ [ 0, 1, 2 ], [ 10, 11, 12 ] ], 'assigning the thread index stays in the thread';
+        is run_kernel(
+            $engine,
+            'my ($i, $j) = thread_index(); my ($ni, $nj) = grid_size(); $out->[$i][$j] = $ni * 10 + $nj; $ni = 1; $nj = 1;',
+            [ out => 'int' ],
+            $grid
+            ),
+            [ [ 23, 23, 23 ], [ 23, 23, 23 ] ], 'assigning the grid size stays in the thread';
+        is run_kernel(
+            $engine,
+            'my ($i, $j) = thread_index(); $j++; $out->[$i][ $j - 1 ] = $i * 10 + $j;',
+            [ out => 'int' ], $grid
+            ),
+            [ [ 1, 2, 3 ], [ 11, 12, 13 ] ], 'the index can be incremented';
+
         my $runner = PerCUDA->new(
             engine   => $engine,
             check    => 1,
@@ -92,6 +119,7 @@ subtest 'kernel subs' => sub {
     like dies { Thread::Kernel::grid_size() }, qr/grid_size\(\) can only be called in a kernel/,
         'grid_size outside a kernel dies';
     ok !exists $Thread::Kernel::{size_x}, 'no $size_x is exported';
+    is Own::Grid::grid_size(), 'own', 'a sub of the package by the same name is kept';
 };
 
 my @rejected = (

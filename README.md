@@ -354,7 +354,7 @@ kernel, run once per element of the grid, in the kernel language (see
 Perl, so it cannot see variables outside the sub (pass them as arguments, or
 use constants). `use PerCUDA` enables the `:GPU` attribute in the calling
 package and imports `thread_index` and `grid_size` into it, so that the
-body compiles under `strict` (called outside a kernel, they die);
+body compiles under `strict` (called outside a kernel, they die; a sub of the package by either name is kept);
 `use PerCUDA ()` does neither. The runner of a `:GPU` sub is built on the first
 call; kernel line numbers in errors are lines of the file.
 `runner(\&scale)` returns it, e.g. for `->array`,
