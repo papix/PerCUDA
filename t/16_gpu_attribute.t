@@ -5,7 +5,7 @@ use PerCUDATest;
 
 my @warnings;
 local $SIG{__WARN__} = sub { push @warnings, @_ };
-use PerCUDA ':kernel';
+use PerCUDA;
 use PerCUDA::Parser;
 use PerCUDA::Analyzer;
 
@@ -131,7 +131,7 @@ sub with_constants : GPU(float, { constant => { A => 2 } }) ($a) {
 {
 
     package PerCUDATest::RunTime;
-    use PerCUDA ':kernel';
+    use PerCUDA;
 
     sub twice : GPU ($out, $in) {
         $out->[$x] = $in->[$x] * 2;
@@ -163,7 +163,7 @@ subtest 'configure' => sub {
 
     require PerCUDATest::Configured;
     is { PerCUDA->runner(\&PerCUDATest::Configured::third)->arguments }, { out => 'double' },
-        "use PerCUDA ':kernel' => { ... } configures the package";
+        "use PerCUDA { ... } configures the package";
     is(PerCUDATest::Configured::array_here(dims => [1])->engine, 'perl',   'PerCUDA->array in that package');
     is(PerCUDA->runner(\&add)->engine, (gpu_available() ? 'gpu' : 'perl'), 'other packages are not affected');
 
@@ -185,7 +185,7 @@ subtest 'configure' => sub {
 {
 
     package PerCUDATest::Functions;
-    use PerCUDA qw(:kernel configure array runner);
+    use PerCUDA qw(configure array runner);
 
     sub inc : GPU ($a) {
         $a->[$x] += 1;
@@ -209,6 +209,9 @@ subtest 'functions' => sub {
     is [ $engine, $type, $values ], [ 'perl', 'double', [ 2, 3 ] ], 'imported configure, array and runner';
     is [ PerCUDATest::Functions::qualified() ], [ 'float', 'perl' ], 'PerCUDA::configure, ::array, ::runner';
     like dies { eval q{ package T4; use PerCUDA qw(nope); 1 } or die $@ }, qr/unknown import 'nope'/, 'unknown import';
+    like dies { eval q{ package T5; use strict; use PerCUDA (); sub k :GPU ($a) { 1 } 1 } or die $@ },
+        qr/Invalid CODE attribute: GPU/, 'use PerCUDA () does not enable :GPU';
+    ok !T5->can('MODIFY_CODE_ATTRIBUTES'), 'and installs nothing';
 
     local $ENV{PERCUDA_ENGINE} = 'perl';
     is(PerCUDA->new(argument => [ a => 'f' ], source => '$a->[$x] = 1;')->engine, 'perl', 'PERCUDA_ENGINE');
@@ -410,7 +413,7 @@ PERL
     like dies { PerCUDA::Kernel::extract_sub("sub k :GPU(f) (\$a) { 1 \n", 'k', 1) }, qr/unbalanced/, 'unbalanced';
 };
 
-like dies { eval q{ package T1; use PerCUDA ':kernel'; sub k :GPU(f) ($a) { $a->[$x] = 1; } 1 } or die $@ },
+like dies { eval q{ package T1; use PerCUDA; sub k :GPU(f) ($a) { $a->[$x] = 1; } 1 } or die $@ },
     qr/cannot read the source of sub k/, 'a sub compiled from a string has no source file';
 like dies { eval q{ package T2; use PerCUDA ':gpu'; 1 } or die $@ }, qr/unknown import ':gpu'/, 'unknown import';
 

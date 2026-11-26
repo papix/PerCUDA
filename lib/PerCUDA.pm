@@ -221,7 +221,7 @@ sub default_engine () {
 }
 
 # Functions of the :GPU subs' world, called as PerCUDA::name(...) or
-# imported (use PerCUDA qw(:kernel configure array runner)), like
+# imported (use PerCUDA qw(configure array runner)), like
 # Getopt::Long::Configure. PerCUDA->name(...) works as well.
 my %EXPORT = map { $_ => 1 } qw(configure array runner);
 
@@ -242,24 +242,24 @@ sub array (@args) {
     return PerCUDA::Kernel->package_context(scalar caller)->array(_function_args(@args));
 }
 
-# use PerCUDA ':kernel': subs with the :GPU attribute run as kernels.
-# use PerCUDA ':kernel' => { options }: also configure(options), like
+# use PerCUDA: subs with the :GPU attribute run as kernels, and $x, $y, ...
+# compile in them (use PerCUDA () does neither).
+# use PerCUDA qw(configure array runner): also import those functions.
+# use PerCUDA { options }: also configure(options) when compiling, like
 # use Getopt::Long qw(:config ...).
-# use PerCUDA qw(configure array runner): import those functions.
 sub import ($class, @tags) {
     my $package = caller;
-    while (@tags) {
-        my $tag = shift @tags;
-        if ($tag eq ':kernel') {
-            require PerCUDA::Kernel;
-            PerCUDA::Kernel->import_into($package);
-            PerCUDA::Kernel->configure($package, shift @tags) if ref $tags[0] eq 'HASH';
+    require PerCUDA::Kernel;
+    PerCUDA::Kernel->import_into($package);
+    for my $tag (@tags) {
+        if (ref $tag eq 'HASH') {
+            PerCUDA::Kernel->configure($package, $tag);
         }
         elsif ($EXPORT{$tag}) {
             *{ Symbol::qualify_to_ref($tag, $package) } = __PACKAGE__->can($tag);
         }
         else {
-            Carp::croak("PerCUDA: unknown import '$tag' (use ':kernel', 'configure', 'array' or 'runner')");
+            Carp::croak("PerCUDA: unknown import '$tag' (use 'configure', 'array', 'runner' or a hash of options)");
         }
     }
     return;
@@ -401,7 +401,7 @@ PerCUDA - GPGPU framework for Perl: write CUDA kernels in Perl
 
 =head1 SYNOPSIS
 
-    use PerCUDA qw(:kernel configure array);
+    use PerCUDA qw(configure array);
 
     # A kernel is a sub: its body runs once per element of the grid, on the GPU.
     sub matmul :GPU ($a, $b, $c, $n) {
@@ -657,13 +657,13 @@ The engine in use, and the generated CUDA C++ and Perl code.
 =head1 FUNCTIONS
 
 For C<:GPU> subs, called as C<PerCUDA::name(...)> or imported, like
-L<Getopt::Long>'s C<Configure> (C<use PerCUDA qw(:kernel configure array runner)>):
+L<Getopt::Long>'s C<Configure> (C<use PerCUDA qw(configure array runner)>):
 
 =over 4
 
 =item C<configure(%args)>
 
-=item C<< use PerCUDA ':kernel' => { %args } >>
+=item C<< use PerCUDA { %args } >>
 
 Options of C<new> (but the per-kernel C<source>, C<argument>, C<dim>,
 C<size> and C<retval>) for every C<:GPU> sub of the calling package, decided
@@ -695,7 +695,7 @@ whose body is in the kernel language. The signature gives the arguments and
 the order of C<run>. Pass the sub to C<new> as C<< source => \&name >> or
 C<< source => sub (...) { ... } >>:
 
-    use PerCUDA ':kernel';
+    use PerCUDA;
 
     sub saxpy ($a, $xs, $ys, $out) {
         $out->[$x] = $a * $xs->[$x] + $ys->[$x];
@@ -772,9 +772,10 @@ L</KERNEL LANGUAGE>). It is read from the source file (when it is passed to
 C<new> or a C<:GPU> sub is compiled), so it must be in a file (not
 C<perl -e> or a string C<eval>; see L</STRING KERNELS>); it never runs as
 Perl, so it cannot see variables outside the sub (pass them as arguments, or
-use constants). C<:kernel> makes C<$x>, C<$y>, C<$z> and C<$size_x>,
-C<$size_y>, C<$size_z> package variables of the caller, so that the body
-compiles under C<strict>. The runner of a C<:GPU> sub is built on the first
+use constants). C<use PerCUDA> enables the C<:GPU> attribute in the calling
+package and makes C<$x>, C<$y>, C<$z> and C<$size_x>, C<$size_y>,
+C<$size_z> package variables of it, so that the body compiles under
+C<strict>; C<use PerCUDA ()> does neither. The runner of a C<:GPU> sub is built on the first
 call; kernel line numbers in errors are lines of the file.
 C<< runner(\&scale) >> returns it, e.g. for C<< ->array >>,
 C<< ->arguments >> or C<< ->cuda_source >>, and

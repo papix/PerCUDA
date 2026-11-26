@@ -1,7 +1,7 @@
 use v5.40;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
-use PerCUDA qw(:kernel configure runner);
+use PerCUDA qw(configure runner);
 
 my $array = [ [ 1 .. 3 ], [ 4 .. 6 ], [ 7 .. 9 ], ];
 

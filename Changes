@@ -19,15 +19,16 @@ Revision history for Perl extension PerCUDA
       for the runner of a :GPU sub, and dim inferred from the axes
       the kernel uses
     - Add kernel subs: source => \&name or sub (...) { ... } (the signature
-      orders the arguments), and with use PerCUDA ':kernel',
+      orders the arguments), and with use PerCUDA,
       sub NAME :GPU(types, options) (signature) { ... } runs as a kernel when
       called
     - Incompatible: without retval, run now returns (and updates in place)
       every array the kernel writes; pass retval => [] for the old behavior
-    - PerCUDA::configure(...) and use PerCUDA ':kernel' => { ... } set the
+    - PerCUDA::configure(...) and use PerCUDA { ... } set the
       options of a package's :GPU subs at run time; PerCUDA::array makes
       device arrays on that configuration; configure, array and runner are
-      functions that can be imported (use PerCUDA qw(:kernel configure ...))
+      functions that can be imported (use PerCUDA qw(configure array runner));
+      use PerCUDA () leaves the caller's package alone
     - Kernel subs are the documented way to write kernels; string kernels
       remain for perl -e, string eval and generated kernels
     - Kernel subs need no types: parameters without one default to float

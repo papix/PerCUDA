@@ -1,7 +1,7 @@
 package PerCUDA::Context;
 use v5.40;
-use Carp ();
-use PerCUDA;
+use Carp    ();
+use PerCUDA ();
 use PerCUDA::Engine::GPU;
 use PerCUDA::Engine::Perl;
 
@@ -68,7 +68,7 @@ PerCUDA::Context - Options shared by several kernels
 
 =head1 SYNOPSIS
 
-    use PerCUDA ':kernel';
+    use PerCUDA;
 
     sub step ($u, $v) { $v->[$x][$y] = 0.5 * $u->[$x][$y] }
 

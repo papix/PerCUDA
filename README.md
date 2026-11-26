@@ -4,7 +4,7 @@ PerCUDA - GPGPU framework for Perl: write CUDA kernels in Perl
 
 # SYNOPSIS
 
-    use PerCUDA qw(:kernel configure array);
+    use PerCUDA qw(configure array);
 
     # A kernel is a sub: its body runs once per element of the grid, on the GPU.
     sub matmul :GPU ($a, $b, $c, $n) {
@@ -231,10 +231,10 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
 # FUNCTIONS
 
 For `:GPU` subs, called as `PerCUDA::name(...)` or imported, like
-[Getopt::Long](https://metacpan.org/pod/Getopt%3A%3ALong)'s `Configure` (`use PerCUDA qw(:kernel configure array runner)`):
+[Getopt::Long](https://metacpan.org/pod/Getopt%3A%3ALong)'s `Configure` (`use PerCUDA qw(configure array runner)`):
 
 - `configure(%args)`
-- `use PerCUDA ':kernel' => { %args }`
+- `use PerCUDA { %args }`
 
     Options of `new` (but the per-kernel `source`, `argument`, `dim`,
     `size` and `retval`) for every `:GPU` sub of the calling package, decided
@@ -264,7 +264,7 @@ whose body is in the kernel language. The signature gives the arguments and
 the order of `run`. Pass the sub to `new` as `source => \&name` or
 `source => sub (...) { ... }`:
 
-    use PerCUDA ':kernel';
+    use PerCUDA;
 
     sub saxpy ($a, $xs, $ys, $out) {
         $out->[$x] = $a * $xs->[$x] + $ys->[$x];
@@ -341,9 +341,10 @@ kernel, run once per element of the grid, in the kernel language (see
 `new` or a `:GPU` sub is compiled), so it must be in a file (not
 `perl -e` or a string `eval`; see ["STRING KERNELS"](#string-kernels)); it never runs as
 Perl, so it cannot see variables outside the sub (pass them as arguments, or
-use constants). `:kernel` makes `$x`, `$y`, `$z` and `$size_x`,
-`$size_y`, `$size_z` package variables of the caller, so that the body
-compiles under `strict`. The runner of a `:GPU` sub is built on the first
+use constants). `use PerCUDA` enables the `:GPU` attribute in the calling
+package and makes `$x`, `$y`, `$z` and `$size_x`, `$size_y`,
+`$size_z` package variables of it, so that the body compiles under
+`strict`; `use PerCUDA ()` does neither. The runner of a `:GPU` sub is built on the first
 call; kernel line numbers in errors are lines of the file.
 `runner(\&scale)` returns it, e.g. for `->array`,
 `->arguments` or `->cuda_source`, and
