@@ -20,8 +20,8 @@ sub new ($class, %args) {
 
     my $precision = $args{precision} // 'single';
     Carp::croak("PerCUDA: precision must be 'single' or 'double'") unless $precision =~ /\A(?:single|double)\z/;
-    my $perl_mode = $args{perl_mode} // 'compat';
-    Carp::croak("PerCUDA: perl_mode must be 'compat' or 'fast'") unless $perl_mode =~ /\A(?:compat|fast)\z/;
+    my $mode = $args{mode} // 'compat';
+    Carp::croak("PerCUDA: mode must be 'fast', 'compat' or 'exact'") unless $mode =~ /\A(?:fast|compat|exact)\z/;
     my $perl_jobs = $args{perl_jobs} // 1;
     Carp::croak("PerCUDA: perl_jobs must be a positive integer or 'auto'")
         unless $perl_jobs =~ /\A(?:[1-9][0-9]*|auto)\z/;
@@ -47,7 +47,7 @@ sub new ($class, %args) {
     my $engine = $args{engine};
     Carp::croak("PerCUDA: engine must be 'gpu' or 'perl'") if defined $engine && $engine !~ /\A(?:gpu|perl)\z/;
 
-    my $self   = bless { analyzer => $an, arguments => \@arguments, perl_mode => $perl_mode }, $class;
+    my $self   = bless { analyzer => $an, arguments => \@arguments, mode => $mode }, $class;
     my %common = (analyzer => $an, size => $size, retval => $retval);
 
     my $context;
@@ -66,7 +66,7 @@ sub new ($class, %args) {
         precision => $precision,
         cache_dir => $args{cache_dir},
         )
-        : PerCUDA::Engine::Perl->new(%common, mode => $perl_mode, jobs => $perl_jobs);
+        : PerCUDA::Engine::Perl->new(%common, mode => $mode, jobs => $perl_jobs);
     return $self;
 }
 
@@ -93,12 +93,12 @@ sub _cpu_count () {
 }
 
 sub cuda_source ($self) {
-    return $self->{cuda_source} //= PerCUDA::CodeGen::CUDA->new($self->{analyzer})->generate;
+    return $self->{cuda_source} //= PerCUDA::CodeGen::CUDA->new($self->{analyzer}, mode => $self->{mode})->generate;
 }
 
 sub perl_source ($self) {
     return $self->{perl_source} //=
-        PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{perl_mode})->generate;
+        PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{mode})->generate;
 }
 
 sub run ($self, @values) {
@@ -113,7 +113,7 @@ __END__
 
 =encoding utf-8
 
-=for stopwords GPGPU NVRTC PerCUDA cubin Fukumoto Ishiura IEICE inf nan ms ndarray ndarrays
+=for stopwords GPGPU NVRTC PerCUDA cubin Fukumoto Ishiura IEICE inf nan ms ndarray ndarrays ulp
 
 =head1 NAME
 
@@ -200,11 +200,26 @@ L<CUDA::DriverAPI> and a CUDA device are available.
 type of float literals and of locals inferred as floating point (C<f> and
 C<d> data keep their declared type). C<single> is faster on the GPU.
 
-=item C<perl_mode>: C<compat> (default) or C<fast>, for the perl engine.
-C<compat> gives exactly the GPU's results (see L</DIFFERENCES BETWEEN ENGINES>)
-but rounding every single precision operation makes it several times slower.
-C<fast> skips single precision rounding and 32-bit integer wrapping, so
-results may differ slightly from the GPU.
+=item C<mode>: how closely the two engines agree (see
+L</DIFFERENCES BETWEEN ENGINES>):
+
+=over 4
+
+=item C<fast>: each engine as fast as it can be. The perl engine skips single
+precision rounding and 32-bit integer wrapping, so results differ slightly.
+
+=item C<compat> (default): the GPU stays as fast as C<fast>; the perl engine
+follows the GPU semantics, which makes it several times slower. Results are
+identical unless the kernel calls C<exp>, C<log>, C<sin>, C<cos>, C<atan2> or
+C<**> with a non-integer exponent: the GPU uses CUDA's functions and perl its
+own, which can differ by about 1 ulp per call.
+
+=item C<exact>: identical results, including those functions: both engines
+compute them with PerCUDA's own implementation (L<PerCUDA::Math>), accurate to
+a few ulp. Kernels using them run slower on the GPU (about 1.4 times in single
+and 2.7 times in double precision for a kernel made of little else).
+
+=back
 
 =item C<perl_jobs>: number of processes for the perl engine, or C<auto> for
 one per CPU (default 1). The rows of the grid (C<$x>) are dealt out to
@@ -288,7 +303,7 @@ The engine in use, and the generated CUDA C++ and Perl code.
 (C<< $a->[$i]->[$j] >> or C<< $a->[$i][$j] >>, up to 3 dimensions). Kernels
 cannot declare arrays, hashes or strings.
 
-=item * Operators: C<+ - * / % **> (integer exponent), C<++ -->,
+=item * Operators: C<+ - * / % **>, C<++ -->,
 C<& | ^ ~ << E<gt>E<gt>>, C<&& || ! and or not>, C<< == != < > <= >= >>,
 C<?:> and assignment operators.
 
@@ -296,7 +311,11 @@ C<?:> and assignment operators.
 C<for my $i (A .. B)>, C<while>, C<until>, C<last>, C<next>, C<return>
 (ends the thread), and statement modifiers C<if>/C<unless>.
 
-=item * Functions: C<sqrt>, C<abs>, C<int>.
+=item * Functions: C<sqrt>, C<abs>, C<int>, C<exp>, C<log>, C<sin>, C<cos>,
+C<atan2($y, $x)>, and POSIX's C<floor> and C<ceil>. As on the GPU, C<sqrt>
+of a negative number is nan and C<log> of 0 is -inf instead of an error.
+C<**> with an integer exponent is repeated multiplication (identical on both
+engines in every mode); with another exponent it is C<pow>.
 
 =back
 
@@ -330,9 +349,15 @@ data is rounded to single precision, including the arrays passed to C<run>.
 =item * Empty arrays are filled with zeros, and only C<retval> arrays are
 changed for the caller (other arrays are copied first when needed).
 
+=item * C<exp>, C<log>, C<sin>, C<cos>, C<atan2> and C<pow>: with
+C<< mode => 'exact' >>, both engines use L<PerCUDA::Math>, which is built from
+the operations above only, so results are bit for bit identical. Otherwise the
+GPU uses CUDA's functions (C<expf> relies on a hardware approximation that
+cannot be reproduced elsewhere), and perl its own, about 1 ulp apart.
+
 =back
 
-With C<perl_mode =E<gt> 'fast'>, the first two are skipped.
+With C<< mode => 'fast' >>, the first two are skipped.
 
 Remaining differences:
 
@@ -354,7 +379,7 @@ precision matrix multiplication (C<eg/benchmark.pl>) takes per C<run> on the
 GPU about 20 ms with nested arrays (13 ms when the output array is reused),
 most of it converting the Perl arrays, and 2.2 ms with ndarrays, close to
 hand-written CUDA. The perl engine takes 17 s with C<< perl_jobs => 'auto' >>
-(11 s with C<< perl_mode => 'fast' >>).
+(11 s with C<< mode => 'fast' >>).
 
 Repeated runs on the same data gain the most from device arrays. For
 Conway's Game of Life on a 1024 x 1024 board (C<author/bench-life.pl>), a
@@ -375,6 +400,7 @@ of a process pay for the CUDA initialization (about 0.15 s).
     perl eg/mandelbrot.pl [gpu|perl] [width] [max_iterations] > mandelbrot.pgm
     perl eg/benchmark.pl [gpu|perl] [n]
     perl author/bench-life.pl [--size N] [--steps N] [nested|ndarray|device|perl ...]
+    perl author/bench-math.pl [--size N] [--perl-size N]    # every mode
 
 =head1 DEPENDENCIES
 

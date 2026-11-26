@@ -1,6 +1,7 @@
 package PerCUDA::CodeGen::CUDA;
 use v5.40;
 use PerCUDA::Analyzer qw(is_pure error);
+use PerCUDA::Math;
 
 # Emits the kernel as CUDA C++ for NVRTC. Arrays are flattened in row-major
 # order. The last Perl axis is mapped to CUDA's x axis,
@@ -43,7 +44,11 @@ static __device__ inline double percuda_powi_d(double x, int n) {
 static __device__ inline int percuda_abs_i(int x) { return x < 0 ? -x : x; }
 C
 
-sub new ($class, $analyzer) { return bless { an => $analyzer }, $class }
+# mode => 'exact' uses PerCUDA::Math instead of CUDA's math functions, so that
+# the perl engine can reproduce the results bit for bit.
+sub new ($class, $analyzer, %opt) {
+    return bless { an => $analyzer, portable => ($opt{mode} // 'compat') eq 'exact' }, $class;
+}
 
 sub generate ($self) {
     my $an   = $self->{an};
@@ -74,7 +79,8 @@ sub generate ($self) {
 
     my $body     = join '', map { $self->_stmt($_, 1) } @{ $an->ast->{body} };
     my $prologue = join '', map { "    $_\n" } @prologue;
-    return "$PRELUDE\nextern \"C\" __global__ void $KERNEL_NAME(" . join(', ', @params) . ") {\n$prologue$body}\n";
+    my $prelude  = $self->{portable} ? $PRELUDE . PerCUDA::Math::c_prelude() : $PRELUDE;
+    return "$prelude\nextern \"C\" __global__ void $KERNEL_NAME(" . join(', ', @params) . ") {\n$prologue$body}\n";
 }
 
 sub _ind ($level) { return '    ' x $level }
@@ -210,7 +216,13 @@ sub _call ($self, $e) {
         return "$fn(" . $self->_expr($arg) . ')';
     }
     return $self->_cast('i', $arg) if $e->{name} eq 'int';
-    error("unsupported function '$e->{name}'");
+
+    # floor and ceil are exact; exp, log, sin, cos and atan2 come from CUDA
+    # (fastest) or from PerCUDA::Math (reproducible by the perl engine)
+    my $name = $e->{name};
+    my $args = join ', ', map { $self->_cast($type, $_) } @{ $e->{args} };
+    return "percuda_${name}_$type($args)" if $self->{portable} && grep { $_ eq $name } @PerCUDA::Math::FUNCTIONS;
+    return ($type eq 'f' ? "${name}f" : $name) . "($args)";
 }
 
 sub _bin ($self, $e) {
@@ -228,8 +240,11 @@ sub _bin ($self, $e) {
         return '((int)percuda_mod((long long)(' . $self->_expr($l) . '), (long long)(' . $self->_expr($r) . ')))';
     }
     if ($op eq '**') {
-        error("'**' needs an integer exponent") if $self->{an}->type_of($r) ne 'i';
-        return "percuda_powi_$type(" . $self->_cast($type, $l) . ', ' . $self->_expr($r) . ')';
+        if ($self->{an}->type_of($r) eq 'i') {    # repeated multiplication, identical on both engines
+            return "percuda_powi_$type(" . $self->_cast($type, $l) . ', ' . $self->_expr($r) . ')';
+        }
+        my $fn = $self->{portable} ? "percuda_pow_$type" : $type eq 'f' ? 'powf' : 'pow';
+        return "$fn(" . $self->_cast($type, $l) . ', ' . $self->_cast($type, $r) . ')';
     }
     if ($op eq '&' || $op eq '|' || $op eq '^' || $op eq '<<' || $op eq '>>') {
         return '(' . $self->_cast('i', $l) . " $op " . $self->_cast('i', $r) . ')';

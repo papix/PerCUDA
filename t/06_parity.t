@@ -45,7 +45,7 @@ subtest 'division by zero gives inf and nan' => sub {
     is $result{gpu},  $result{perl},                       'perl and gpu agree' if $result{gpu};
 };
 
-subtest 'perl_mode => fast' => sub {
+subtest 'mode => fast' => sub {
     my %args = (
         engine   => 'perl',
         argument => [ in => 'f', out => 'f' ],
@@ -53,12 +53,12 @@ subtest 'perl_mode => fast' => sub {
         source   => 'my $s = 0.0; for my $i (1 .. 100) { $s += $in->[$x] / $i; } $out->[$x] = $s;',
     );
     my $compat = PerCUDA->new(%args);
-    my $fast   = PerCUDA->new(%args, perl_mode => 'fast');
+    my $fast   = PerCUDA->new(%args, mode => 'fast');
     like $compat->perl_source, qr/pack\('f'/, 'compat rounds to single precision';
     unlike $fast->perl_source, qr/pack\('f'/, 'fast does not';
     my ($c, $f) = ($compat->run([ 1 .. 8 ], []), $fast->run([ 1 .. 8 ], []));
     ok !grep({ abs($c->[$_] - $f->[$_]) > 1e-5 * abs $c->[$_] } 0 .. 7), 'results are close';
-    like dies { PerCUDA->new(%args, perl_mode => 'slow') }, qr/perl_mode must be/, 'rejects unknown perl_mode';
+    like dies { PerCUDA->new(%args, mode => 'slow') }, qr/mode must be/, 'rejects unknown mode';
 };
 
 for my $name (sort keys %CASE) {

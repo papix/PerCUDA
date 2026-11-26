@@ -11,6 +11,11 @@ Revision history for Perl extension PerCUDA
     - Add precision => 'single' | 'double' for both engines
     - Pass scalars by value, coalesce memory access, reuse device buffers and
       the CUDA context, convert arrays in C (CUDA::DriverAPI write_array/read_array)
+    - Add exp, log, sin, cos, atan2, floor, ceil and ** with any exponent
+    - Replace perl_mode with mode => 'fast' | 'compat' | 'exact'; exact uses
+      PerCUDA::Math on both engines for bit-identical math functions
+    - sqrt and log of out-of-domain values give nan/-inf on the perl engine
+      instead of dying, as on the GPU
     - Add $runner->array (PerCUDA::Array): arrays kept with the engine
       between runs, without transfers
     - Add author/bench-life.pl (Game of Life: perl, nested, ndarray, device)

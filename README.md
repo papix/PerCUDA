@@ -71,11 +71,19 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     - `precision`: `single` (default) or `double`, on both engines. The
     type of float literals and of locals inferred as floating point (`f` and
     `d` data keep their declared type). `single` is faster on the GPU.
-    - `perl_mode`: `compat` (default) or `fast`, for the perl engine.
-    `compat` gives exactly the GPU's results (see ["DIFFERENCES BETWEEN ENGINES"](#differences-between-engines))
-    but rounding every single precision operation makes it several times slower.
-    `fast` skips single precision rounding and 32-bit integer wrapping, so
-    results may differ slightly from the GPU.
+    - `mode`: how closely the two engines agree (see
+    ["DIFFERENCES BETWEEN ENGINES"](#differences-between-engines)):
+        - `fast`: each engine as fast as it can be. The perl engine skips single
+        precision rounding and 32-bit integer wrapping, so results differ slightly.
+        - `compat` (default): the GPU stays as fast as `fast`; the perl engine
+        follows the GPU semantics, which makes it several times slower. Results are
+        identical unless the kernel calls `exp`, `log`, `sin`, `cos`, `atan2` or
+        `**` with a non-integer exponent: the GPU uses CUDA's functions and perl its
+        own, which can differ by about 1 ulp per call.
+        - `exact`: identical results, including those functions: both engines
+        compute them with PerCUDA's own implementation ([PerCUDA::Math](https://metacpan.org/pod/PerCUDA%3A%3AMath)), accurate to
+        a few ulp. Kernels using them run slower on the GPU (about 1.4 times in single
+        and 2.7 times in double precision for a kernel made of little else).
     - `perl_jobs`: number of processes for the perl engine, or `auto` for
     one per CPU (default 1). The rows of the grid (`$x`) are dealt out to
     forked processes, which send back their rows of the `retval` arrays; results
@@ -147,13 +155,17 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
 - Scalars declared with `my`, scalar and array arguments
 (`$a->[$i]->[$j]` or `$a->[$i][$j]`, up to 3 dimensions). Kernels
 cannot declare arrays, hashes or strings.
-- Operators: `+ - * / % **` (integer exponent), `++ --`,
+- Operators: `+ - * / % **`, `++ --`,
 `& | ^ ~ << >>`, `&& || ! and or not`, `== != < > <= >=`,
 `?:` and assignment operators.
 - Control: `if`/`elsif`/`else`, `unless`, `for (;;)`,
 `for my $i (A .. B)`, `while`, `until`, `last`, `next`, `return`
 (ends the thread), and statement modifiers `if`/`unless`.
-- Functions: `sqrt`, `abs`, `int`.
+- Functions: `sqrt`, `abs`, `int`, `exp`, `log`, `sin`, `cos`,
+`atan2($y, $x)`, and POSIX's `floor` and `ceil`. As on the GPU, `sqrt`
+of a negative number is nan and `log` of 0 is -inf instead of an error.
+`**` with an integer exponent is repeated multiplication (identical on both
+engines in every mode); with another exponent it is `pow`.
 
 Local variables are typed by inference: a variable is an int unless a float
 value is ever assigned to it. `/` always divides as floating point, as in
@@ -176,8 +188,13 @@ precisions.
 data is rounded to single precision, including the arrays passed to `run`.
 - Empty arrays are filled with zeros, and only `retval` arrays are
 changed for the caller (other arrays are copied first when needed).
+- `exp`, `log`, `sin`, `cos`, `atan2` and `pow`: with
+`mode => 'exact'`, both engines use [PerCUDA::Math](https://metacpan.org/pod/PerCUDA%3A%3AMath), which is built from
+the operations above only, so results are bit for bit identical. Otherwise the
+GPU uses CUDA's functions (`expf` relies on a hardware approximation that
+cannot be reproduced elsewhere), and perl its own, about 1 ulp apart.
 
-With `perl_mode => 'fast'`, the first two are skipped.
+With `mode => 'fast'`, the first two are skipped.
 
 Remaining differences:
 
@@ -194,7 +211,7 @@ precision matrix multiplication (`eg/benchmark.pl`) takes per `run` on the
 GPU about 20 ms with nested arrays (13 ms when the output array is reused),
 most of it converting the Perl arrays, and 2.2 ms with ndarrays, close to
 hand-written CUDA. The perl engine takes 17 s with `perl_jobs => 'auto'`
-(11 s with `perl_mode => 'fast'`).
+(11 s with `mode => 'fast'`).
 
 Repeated runs on the same data gain the most from device arrays. For
 Conway's Game of Life on a 1024 x 1024 board (`author/bench-life.pl`), a
@@ -215,6 +232,7 @@ of a process pay for the CUDA initialization (about 0.15 s).
     perl eg/mandelbrot.pl [gpu|perl] [width] [max_iterations] > mandelbrot.pgm
     perl eg/benchmark.pl [gpu|perl] [n]
     perl author/bench-life.pl [--size N] [--steps N] [nested|ndarray|device|perl ...]
+    perl author/bench-math.pl [--size N] [--perl-size N]    # every mode
 
 # DEPENDENCIES
 

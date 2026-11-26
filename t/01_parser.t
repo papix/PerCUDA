@@ -32,7 +32,7 @@ my @errors = (
     [ '$a->[$x] = $undeclared;',        qr/\$undeclared is not declared/ ],
     [ 'my @list;',                      qr/unsupported character .@./ ],
     [ 'my %h;',                         qr/unsupported character|only scalar/ ],
-    [ '$a->[$x] = sin(1);',             qr/function 'sin' is not supported/ ],
+    [ '$a->[$x] = tanh(1);',            qr/function 'tanh' is not supported/ ],
     [ 'last;',                          qr/'last' outside of a loop/ ],
     [ 'for my $i (0..3) { { last; } }', qr/'last' inside a bare block/ ],
     [ '$a->[$x] = $a->[$x][0];',        qr/used with 1 and 2 subscripts/ ],
@@ -41,7 +41,7 @@ my @errors = (
     [ '$a->[$x] = (',                   qr/syntax error/ ],
     [ '$a->[$x] = 1 .. 2;',             qr/range operator/ ],
     [ '$a->[$x][$x][$x][$x] = 1;',      qr/deeper than 3/ ],
-    [ '$a->[$x] = 2 ** 0.5;',           qr/integer exponent/ ],
+    [ '$a->[$x] = atan2(1);',           qr/atan2 takes 2 arguments/ ],
 );
 for my $case (@errors) {
     my ($src, $re) = @$case;

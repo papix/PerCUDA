@@ -16,12 +16,20 @@ Setup, commands, layout and style are in `CONTRIBUTING.md`; read it first.
   requests and issues. `author/lint.sh` flags Japanese text in files.
 - No experimental Perl features (the maintainer's decision); stable `use v5.40`
   features only.
-- The perl engine gives exactly the GPU's results in `perl_mode => 'compat'`
+- The perl engine gives exactly the GPU's results in `mode => 'compat'` (apart from math functions)
   (the maintainer's decision): single precision rounding after every
   operation, 32-bit integer wrap, inf/nan on division by zero, C-like
   conversions. Any change to `CodeGen::CUDA` needs the matching change in
   `CodeGen::Perl`; `t/04_semantics.t`, `t/05_mandelbrot.t` and
   `t/06_parity.t` compare the engines exactly.
+- `mode` (the maintainer's decision): `fast` and `compat` keep the GPU at full
+  speed with CUDA's math functions; `exact` trades GPU speed for bit-identical
+  results by using `PerCUDA::Math` on both engines. Never let `exact` call a
+  CUDA math function, and never use anything but + - * /, floor, fabs, ldexp
+  and frexp inside `PerCUDA::Math` (CUDA's `expf` uses an irreproducible
+  hardware approximation). Each function there is one syntax tree rendered to
+  both CUDA and Perl; change the tree, not one rendering. `t/12_math.t`
+  checks bit identity and accuracy.
 - The GPU code is compiled with `--fmad=false`; fused multiply-add would break
   the exact match.
 - The kernel ABI is defined once, in `PerCUDA::Analyzer::kernel_params`; the

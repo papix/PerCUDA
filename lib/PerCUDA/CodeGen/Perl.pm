@@ -13,10 +13,13 @@ use PerCUDA::Analyzer qw(is_pure assigned_symbols walk error);
 my %BITOP = ('&' => 'band', '|' => 'bor', '^' => 'bxor', '<<' => 'shl', '>>' => 'shr');
 my %CMP   = map { $_ => 1 } qw(== != < > <= >=);
 
-# mode: 'compat' (default) emulates the GPU exactly; 'fast' skips single
-# precision rounding and 32-bit integer wrapping, which cost the most.
+# mode: 'compat' (default) follows the GPU semantics, with Perl's own exp,
+# log, sin, cos, atan2 and pow; 'exact' also takes those from PerCUDA::Math,
+# as the GPU does in that mode; 'fast' skips single precision rounding and
+# 32-bit integer wrapping, which cost the most.
 sub new ($class, $analyzer, %opt) {
-    return bless { an => $analyzer, exact => ($opt{mode} // 'compat') ne 'fast' }, $class;
+    my $mode = $opt{mode} // 'compat';
+    return bless { an => $analyzer, exact => $mode ne 'fast', portable => $mode eq 'exact' }, $class;
 }
 
 sub generate ($self) {
@@ -218,7 +221,17 @@ sub _expr ($self, $e) {
         my $type = $an->type_of($e);
         return 'int(' . $self->_expr($e->{args}[0]) . ')' if $e->{name} eq 'int';
         return 'abs(' . $self->_expr($e->{args}[0]) . ')' if $e->{name} eq 'abs';
-        return $self->_round($type, 'sqrt(' . $self->_cast($type, $e->{args}[0]) . ')');
+        my $name = $e->{name};
+        my $args = join ', ', map { $self->_cast($type, $_) } @{ $e->{args} };
+        return "PerCUDA::Math::${name}_$type($args)"
+            if $self->{portable} && grep { $_ eq $name } @PerCUDA::Math::FUNCTIONS;
+
+        # Perl's own functions, without the errors the GPU does not raise
+        my $code =
+              $name eq 'floor' || $name eq 'ceil' ? "POSIX::$name($args)"
+            : $name eq 'sqrt'  || $name eq 'log'  ? "PerCUDA::Runtime::safe_$name($args)"
+            :                                       "$name($args)";
+        return $self->_round($type, $code);
     }
     if ($t eq 'bin') {
         my $op   = $e->{op};
@@ -237,7 +250,15 @@ sub _expr ($self, $e) {
         if ($op eq '**') {
 
             # repeated multiplication in the same order as the GPU's percuda_powi_*
-            return "PerCUDA::Runtime::powi_$type(" . $self->_cast($type, $e->{l}) . ', ' . $self->_expr($e->{r}) . ')';
+            if ($an->type_of($e->{r}) eq 'i') {
+                return
+                      "PerCUDA::Runtime::powi_$type("
+                    . $self->_cast($type, $e->{l}) . ', '
+                    . $self->_expr($e->{r}) . ')';
+            }
+            my ($l, $r) = ($self->_cast($type, $e->{l}), $self->_cast($type, $e->{r}));
+            return "PerCUDA::Math::pow_$type($l, $r)" if $self->{portable};
+            return $self->_round($type, "($l ** $r)");
         }
 
         # division and modulus by zero give inf/nan and 0 as on the GPU, instead of dying

@@ -20,7 +20,19 @@ my %KEYWORD = map { $_ => 1 } qw(
     my if elsif else unless for foreach while until last next return and or not
 );
 
-our %BUILTIN = (sqrt => 1, abs => 1, int => 1);
+# Functions and their number of arguments. floor and ceil are POSIX's.
+our %BUILTIN = (
+    sqrt  => 1,
+    abs   => 1,
+    int   => 1,
+    exp   => 1,
+    log   => 1,
+    sin   => 1,
+    cos   => 1,
+    floor => 1,
+    ceil  => 1,
+    atan2 => 2,
+);
 
 sub new ($class, %args) {
     return bless { source => $args{source} // '' }, $class;
@@ -387,15 +399,19 @@ sub _primary ($self) {
         $self->_next;
         Carp::croak("PerCUDA: function '$tok->{value}' is not supported in kernels at line $tok->{line}")
             unless $BUILTIN{ $tok->{value} };
-        my $arg;
+        my $arity = $BUILTIN{ $tok->{value} };
+        my @args;
         if ($self->_accept(op => '(')) {
-            $arg = $self->_expr;
+            push @args, $self->_assign_expr;
+            while ($self->_accept(op => ',')) { push @args, $self->_assign_expr }
             $self->_expect(op => ')');
         }
-        else {
-            $arg = $self->_shift;    # named unary operator: sqrt $x + 1 is sqrt($x + 1)
+        elsif ($arity == 1) {
+            push @args, $self->_shift;    # named unary operator: sqrt $x + 1 is sqrt($x + 1)
         }
-        return { t => 'call', name => $tok->{value}, args => [$arg] };
+        Carp::croak("PerCUDA: $tok->{value} takes $arity argument" . ($arity > 1 ? 's' : '') . " at line $tok->{line}")
+            unless @args == $arity;
+        return { t => 'call', name => $tok->{value}, args => \@args, line => $tok->{line} };
     }
     $self->_error('unexpected token');
 }

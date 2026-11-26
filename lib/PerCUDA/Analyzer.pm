@@ -328,15 +328,6 @@ sub _infer ($self) {
             }
         }
     }
-
-    # the GPU has no pow() without libdevice
-    walk(
-        $self->{ast},
-        sub ($n) {
-            error("'**' needs an integer exponent")
-                if $n->{t} eq 'bin' && $n->{op} eq '**' && $self->type_of($n->{r}) ne 'i';
-        }
-    );
     return;
 }
 
@@ -351,11 +342,10 @@ sub type_of ($self, $e) {
         return $e->{op} eq '-' ? $self->type_of($e->{e}) : 'i';
     }
     if ($t eq 'call') {
-        my $arg = $self->type_of($e->{args}[0]);
-        return
-              $e->{name} eq 'sqrt' ? type_max($self->{real}, $arg)
-            : $e->{name} eq 'abs'  ? $arg
-            :                        'i';
+        my @args = map { $self->type_of($_) } @{ $e->{args} };
+        return $args[0] if $e->{name} eq 'abs';
+        return 'i'      if $e->{name} eq 'int';
+        return type_max($self->{real}, @args);    # sqrt, exp, log, sin, cos, floor, ceil, atan2
     }
     if ($t eq 'bin') {
         my ($l, $r) = ($self->type_of($e->{l}), $self->type_of($e->{r}));
@@ -364,7 +354,8 @@ sub type_of ($self, $e) {
         return type_max($self->{real}, $l, $r) if $op eq '/';
         if ($op eq '**') {
             return $l if nonneg_int_literal($e->{r});
-            return type_max($self->{real}, $l);
+            return type_max($self->{real}, $l) if $r eq 'i';    # repeated multiplication
+            return type_max($self->{real}, $l, $r);    # pow
         }
         return type_max($l, $r) if ($op eq '||' || $op eq '&&') && is_pure($e);
         return 'i';
