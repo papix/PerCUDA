@@ -170,8 +170,9 @@ sub new ($class, %args) {
     if (!ref $size && !defined $size) {
 
         # By default the grid is the shape of the first non-empty array passed
-        # to run, among: arrays the kernel reads with at least dim dimensions,
-        # other arrays with at least dim dimensions (any arrays if none has).
+        # to run, among: arrays the kernel reads with at least as many
+        # dimensions as the grid, other arrays with that many (any arrays if
+        # none has).
         my @arrays = grep { $_->{kind} eq 'array' } @{ $an->args };
         my @full   = grep { $_->{rank} >= $dim } @arrays;
         my %seen;

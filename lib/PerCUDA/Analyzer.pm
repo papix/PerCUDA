@@ -42,12 +42,12 @@ sub dim  ($self) { return $self->{dim} }
 sub real ($self) { return $self->{real} }
 sub axes ($self) { return @AXES[ 0 .. $self->{dim} - 1 ] }
 
-# The names the kernel gives the thread index, one per axis (undef where it
-# declares none).
 # 'thread_index()' or 'grid_size()': the declaration that gives the
 # dimensions (thread_index() when there are both), for messages.
 sub index_function ($self) { return $self->{index_function} }
 
+# The names the kernel gives the thread index, one per axis (undef where it
+# declares none).
 sub thread_names ($self) {
     return [ map { $self->{thread_names}[$_] } 0 .. $self->{dim} - 1 ];
 }
@@ -134,7 +134,7 @@ sub infer_types ($ast, $names, $real, $int_names = {}) {
     );
 
     # A local that must be an int passes it on to what is assigned to it
-    # (my $row = $x * $w; ... $a->[$row]: $w is an int).
+    # (my $row = $i * $w; ... $a->[$row]: $w is an int).
     my %assigned;
     walk(
         $ast,
