@@ -4,7 +4,18 @@ use Carp ();
 use Exporter 'import';
 use Scalar::Util qw(blessed);
 
-our @EXPORT_OK = qw(shape zeros copy_array convert_array is_ndarray ndarray_has_type type_code type_name);
+our @EXPORT_OK =
+    qw(shape zeros copy_array convert_array is_ndarray ndarray_has_type type_code type_name removed_option);
+
+# Options that no longer exist, with what to do instead; every entry point
+# (new, :GPU options, context, configure) reports them the same way.
+my %REMOVED_OPTION = (
+    dim    => "dim is not an option; the kernel's my (\$x, ...) = thread_index() gives the dimensions",
+    retval => 'retval is now called returns',
+);
+
+# The error message for a removed option, or undef.
+sub removed_option ($key) { return $REMOVED_OPTION{$key} }
 
 # PDL type of each PerCUDA type. PDL itself is never loaded here: an ndarray
 # can only arrive when the caller has loaded it.

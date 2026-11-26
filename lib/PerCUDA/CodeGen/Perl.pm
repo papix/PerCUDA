@@ -49,13 +49,12 @@ sub generate ($self) {
 
     # A kernel that assigns its thread index or grid size variables gets its
     # own copies, as each GPU thread has (the loops must not see the change).
+    my $assigned = assigned_symbols($an->ast);
     my %moved;
     walk(
         $an->ast,
         sub ($n) {
-            my $target = $n->{t} eq 'assign' ? $n->{lhs} : ($n->{t} eq 'pre' || $n->{t} eq 'post') ? $n->{e} : undef;
-            $moved{ $target->{sym}{cname} } = 1
-                if $target && $target->{t} eq 'var' && $target->{sym}{cname} =~ /\Apercuda_(?:size_)?[xyz]\z/;
+            $moved{ $n->{sym}{cname} } = 1 if $n->{t} eq 'var' && $n->{sym}{index} && $assigned->{ refaddr $n->{sym} };
         }
     );
     $out .= _ind($level) . "my \$$_ = \$$_;\n" for sort keys %moved;

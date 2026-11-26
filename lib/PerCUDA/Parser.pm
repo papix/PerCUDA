@@ -10,7 +10,8 @@ our @CARP_NOT = qw(PerCUDA PerCUDA::Kernel PerCUDA::Context);
 # Statements: { t => 'my' | 'expr' | 'if' | 'for' | 'foreach' | 'while' | 'block'
 #                    | 'last' | 'next' | 'return' | 'index', ... }
 # 'index' is my ($x, $y) = thread_index(); (what => 'thread') or
-# my ($nx, $ny) = grid_size(); (what => 'grid'), with names => [ 'x', 'y' ].
+# my ($nx, $ny) = grid_size(); (what => 'grid'), with names => [ 'x', 'y' ]
+# and func => 'thread_index()' or 'grid_size()' (for messages).
 # Expressions: { t => 'num' | 'var' | 'elem' | 'bin' | 'un' | 'assign' | 'pre' | 'post'
 #                     | 'cond' | 'call', ... }
 
@@ -178,8 +179,10 @@ sub _statement ($self) {
     return $stmt;
 }
 
-sub _simple_statement ($self) {
-    return $self->_my if $self->_is(kw => 'my');
+# $in_for: the initializer of a C-style for, where my (...) = thread_index()
+# is not a declaration of the kernel's index.
+sub _simple_statement ($self, $in_for = 0) {
+    return $self->_my($in_for) if $self->_is(kw => 'my');
     for my $kw (qw(last next return)) {
         if ($self->_accept(kw => $kw)) {
             $self->_error("'$kw' with a value is not supported")
@@ -194,8 +197,9 @@ sub _simple_statement ($self) {
     return { t => 'expr', e => $self->_expr };
 }
 
-sub _my ($self) {
+sub _my ($self, $in_for = 0) {
     my $tok = $self->_expect(kw => 'my');
+    $self->_error('my (...) is not supported in a for loop') if $in_for && $self->_is(op => '(');
     if ($self->_accept(op => '(')) {    # my ($x, $y) = thread_index();
         my @names;
         do {
@@ -209,7 +213,7 @@ sub _my ($self) {
     }
     $self->_error('only scalar variables can be declared with my') unless $self->_is('var');
     my $name = $self->_next->{value};
-    if ($self->_is(op => '=') && $self->_is_index_call(1)) {    # my $i = thread_index();
+    if (!$in_for && $self->_is(op => '=') && $self->_is_index_call(1)) {    # my $i = thread_index();
         $self->_next;
         return $self->_index_call([$name], $tok->{line});
     }
@@ -230,7 +234,7 @@ sub _index_call ($self, $names, $line) {
     Carp::croak("PerCUDA: $func() gives at most 3 values, not " . @$names . " at kernel line $line") if @$names > 3;
     my %seen;
     $seen{$_}++ && Carp::croak("PerCUDA: \$$_ is declared twice at kernel line $line") for @$names;
-    return { t => 'index', what => $INDEX{$func}, names => $names, line => $line };
+    return { t => 'index', what => $INDEX{$func}, func => "$func()", names => $names, line => $line };
 }
 
 sub _for ($self) {
@@ -257,7 +261,7 @@ sub _for ($self) {
 
     # C style: for (INIT; COND; STEP) { ... }
     $self->_expect(op => '(');
-    my $init = $self->_is(op => ';') ? undef : $self->_simple_statement;
+    my $init = $self->_is(op => ';') ? undef : $self->_simple_statement(1);
     $self->_expect(op => ';');
     my $cond = $self->_is(op => ';') ? undef : $self->_expr;
     $self->_expect(op => ';');

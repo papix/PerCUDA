@@ -34,7 +34,9 @@ my @KEEP;    # the :GPU subs, alive for the life of the process (the hashes abov
 
 sub import_into ($class, $package) {
 
-    # A sub of the package's own by that name stays (kernels never call it).
+    # A sub the package already has by that name stays (kernels never call
+    # it); one defined after use PerCUDA replaces the import, with Perl's
+    # usual "redefined" warning.
     for my $func (sort keys %INDEX_FUNCTION) {
         my $glob = qualify_to_ref($func, $package);
         *$glob = $INDEX_FUNCTION{$func} unless *$glob{CODE};
@@ -71,6 +73,8 @@ sub parse_attribute ($text, $package = "main") {
     Carp::croak("PerCUDA: :GPU options must be one hash after the types, e.g. :GPU(float, { precision => 'double' })")
         unless ref $options eq 'HASH';
     for my $key (sort keys %$options) {
+        my $removed = PerCUDA::Data::removed_option($key);
+        Carp::croak("PerCUDA: $removed") if $removed;
         Carp::croak("PerCUDA: unknown :GPU option '$key'") unless $OPTION{$key};
     }
     return (\@types, $options);
