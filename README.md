@@ -249,6 +249,21 @@ of a process pay for the CUDA initialization (about 0.15 s).
 
 # EXAMPLES
 
+`eg/` has samples of computations common in research, each checked against
+a known answer (`eg/README.md` lists their methods, parameters and
+references):
+
+    perl eg/heat.pl [gpu|perl] [n] [steps]              # heat equation, FTCS
+    perl eg/poisson-cg.pl [gpu|perl] [n] [tolerance]    # Poisson, conjugate gradient
+    perl eg/gray-scott.pl [gpu|perl] [n] [steps] [image.pgm]    # reaction-diffusion
+    perl eg/nbody.pl [gpu|perl] [bodies] [steps] [dt]   # gravity, leapfrog
+    perl eg/ising.pl [gpu|perl] [L] [sweeps] [T ...]    # Ising model, Metropolis
+    perl eg/black-scholes.pl [gpu|perl] [options]       # option pricing, closed form
+    perl eg/mc-option.pl [gpu|perl] [paths]             # option pricing, Monte Carlo
+    perl eg/kmeans.pl [gpu|perl] [points] [K]           # k-means clustering
+
+Others:
+
     perl eg/matmul.pl [gpu|perl]
     perl eg/mandelbrot.pl [gpu|perl] [width] [max_iterations] > mandelbrot.pgm
     perl eg/benchmark.pl [gpu|perl] [n]
