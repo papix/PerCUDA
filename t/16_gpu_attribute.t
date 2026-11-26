@@ -2,6 +2,9 @@ use v5.40;
 use Test2::V0;
 use lib 't/lib';
 use PerCUDATest;
+
+my @warnings;
+local $SIG{__WARN__} = sub { push @warnings, @_ };
 use PerCUDA ':kernel';
 use PerCUDA::Parser;
 use PerCUDA::Analyzer;
@@ -410,5 +413,7 @@ PERL
 like dies { eval q{ package T1; use PerCUDA ':kernel'; sub k :GPU(f) ($a) { $a->[$x] = 1; } 1 } or die $@ },
     qr/cannot read the source of sub k/, 'a sub compiled from a string has no source file';
 like dies { eval q{ package T2; use PerCUDA ':gpu'; 1 } or die $@ }, qr/unknown import ':gpu'/, 'unknown import';
+
+is \@warnings, [], 'no warnings';
 
 done_testing;

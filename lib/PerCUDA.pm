@@ -70,7 +70,7 @@ sub new ($class, %args) {
         my %type  = (
             (
                 map { $param{ $shared_argument[ $_ * 2 ] } ? @shared_argument[ $_ * 2, $_ * 2 + 1 ] : () }
-                    0 .. $#shared_argument / 2
+                    0 .. @shared_argument / 2 - 1
             ),
             map { @$_ } @arguments
         );

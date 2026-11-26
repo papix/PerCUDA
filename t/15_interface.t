@@ -2,6 +2,9 @@ use v5.40;
 use Test2::V0;
 use lib 't/lib';
 use PerCUDATest;
+
+my @warnings;
+local $SIG{__WARN__} = sub { push @warnings, @_ };
 use PerCUDA;
 use PerCUDA::Parser;
 use PerCUDA::Analyzer qw(infer_dim);
@@ -240,5 +243,7 @@ for my $engine (both_engines) {
         };
     };
 }
+
+is \@warnings, [], 'no warnings';
 
 done_testing;
