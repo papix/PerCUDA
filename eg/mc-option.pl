@@ -19,6 +19,7 @@ my ($s0, $strike, $rate, $sigma, $expiry) = (100, 100, 0.05, 0.2, 1);
 my $exact = 10.450583572185565;
 
 sub simulate : GPU ($payoff, $square, $seed, $s0, $k, $r, $sigma, $t) {
+    my $x   = thread_index();
     my $u1  = 1.0 - random($seed, $x, 0);    # (0, 1]: log(0) would be -inf
     my $u2  = random($seed, $x, 1);
     my $z   = sqrt(-2.0 * log($u1)) * cos(6.283185307179586 * $u2);

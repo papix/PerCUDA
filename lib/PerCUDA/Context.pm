@@ -70,7 +70,7 @@ PerCUDA::Context - Options shared by several kernels
 
     use PerCUDA;
 
-    sub step ($u, $v) { $v->[$x][$y] = 0.5 * $u->[$x][$y] }
+    sub step ($u, $v) { my ($i, $j) = thread_index(); $v->[$i][$j] = 0.5 * $u->[$i][$j] }
 
     my $pc   = PerCUDA->context(engine => $ARGV[0], precision => 'double');
     my $step = $pc->kernel(source => \&step);

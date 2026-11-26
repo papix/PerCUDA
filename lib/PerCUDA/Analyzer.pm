@@ -50,12 +50,12 @@ sub thread_names ($self) {
 
 # [ { name, type, kind => array|scalar|unused, rank, read, written, covered } ] in declaration order.
 # covered: the array is never read and every thread stores into its own
-# element ($a->[$x][$y] = ... for dim 2) unconditionally, so when its shape is
-# the grid, every element is overwritten.
+# element ($a->[$i][$j] = ... after my ($i, $j) = thread_index()) unconditionally,
+# so when its shape is the grid, every element is overwritten.
 sub args ($self) { return $self->{args} }
 
-# True when every store into an array uses $x as its first index, so threads
-# with different $x never write the same element.
+# True when every store into an array uses the first thread index as its
+# first index, so threads in different rows never write the same element.
 sub writes_own_rows ($self) { return $self->{writes_own_rows} }
 
 sub new_id ($self) { return $self->{next_id}++ }
@@ -539,7 +539,7 @@ sub nonneg_int_literal ($e) { return $e->{t} eq 'num' && !$e->{float} && $e->{va
 sub _analyze_writes ($self) {
     my @thread = @{ $self->{thread_syms} };
     my $moved  = assigned_symbols($self->{ast});
-    my $fixed  = !grep { $moved->{ refaddr $_ } } @thread;    # $x, $y, $z are never assigned
+    my $fixed  = !grep { $moved->{ refaddr $_ } } @thread;    # the thread index variables are never assigned
 
     my $is_thread_var = sub ($e, $axis) { $e->{t} eq 'var' && $thread[$axis] && $e->{sym} == $thread[$axis] };
 

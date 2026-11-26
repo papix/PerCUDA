@@ -20,6 +20,7 @@ my @truth = map { [ 6 * cos(2 * 3.14159265358979 * $_ / $k), 6 * sin(2 * 3.14159
 # Types: k is an int (it is an operand of %); label, changed, c and w are ints
 # (labels, flags, a cluster index, counts), which the defaults would make float.
 sub generate : GPU({ size => 'px' }) ($px, $py, $centre, $k, $seed) {
+    my $x   = thread_index();
     my $c   = $x % $k;
     my $r   = sqrt(-2.0 * log(1.0 - random($seed, $x, 0)));
     my $phi = 6.283185307179586 * random($seed, $x, 1);
@@ -29,6 +30,7 @@ sub generate : GPU({ size => 'px' }) ($px, $py, $centre, $k, $seed) {
 
 sub assign : GPU({ size => 'px', argument => [ label => 'int', changed => 'int' ] })
     ($px, $py, $centre, $k, $label, $changed) {
+    my $x      = thread_index();
     my $best   = 0;
     my $best_d = 3.4e38;
     for my $c (0 .. $k - 1) {
@@ -46,6 +48,7 @@ sub assign : GPU({ size => 'px', argument => [ label => 'int', changed => 'int' 
 
 sub mask : GPU({ size => 'px', argument => [ label => 'int', c => 'int', w => 'int' ] })
     ($px, $py, $label, $c, $wx, $wy, $w) {
+    my $x  = thread_index();
     my $in = $label->[$x] == $c;
     $wx->[$x] = $in ? $px->[$x] : 0.0;
     $wy->[$x] = $in ? $py->[$x] : 0.0;

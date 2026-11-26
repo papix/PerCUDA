@@ -5,6 +5,8 @@ use PerCUDATest;
 use PerCUDA;
 
 my $LIFE = <<'K';
+my ($x, $y) = thread_index();
+my ($size_x, $size_y) = grid_size();
 my $n = 0;
 for my $dx (-1 .. 1) {
     for my $dy (-1 .. 1) {
@@ -18,7 +20,6 @@ K
 my sub life ($engine, %args) {
     return PerCUDA->new(
         engine   => $engine,
-        dim      => 2,
         size     => 'cur',
         argument => [ cur => 'i', next => 'i' ],
         retval   => ['next'],
@@ -80,7 +81,7 @@ subtest 'mixed with nested arrays, and written device arrays outside retval' => 
             engine   => $engine,
             argument => [ in => 'f', tmp => 'f', out => 'f' ],
             retval   => ['out'],
-            source   => '$tmp->[$x] = $in->[$x] * 2; $out->[$x] = $tmp->[$x] + 1;',
+            source   => 'my $x = thread_index(); $tmp->[$x] = $in->[$x] * 2; $out->[$x] = $tmp->[$x] + 1;',
         );
         my $tmp = $r->array(type => 'f', dims => [4]);
         is scalar $r->run([ 1 .. 4 ], $tmp, []), [ 3, 5, 7, 9 ], "$engine: nested retval";

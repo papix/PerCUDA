@@ -7,17 +7,21 @@ use PerCUDA;
 # The perl engine follows the GPU semantics, so these must agree exactly.
 my %CASE = (
     'bit operations on negative numbers' => <<'K',
+my $x = thread_index();
 my $v = $in->[$x];
 $out->[$x] = (($v & -6) | ($v ^ 3)) + ($v << 3) + ($v >> 2) + ~$v;
 K
     'comparisons and not yield 0/1' => <<'K',
+my $x = thread_index();
 my $v = $in->[$x];
 $out->[$x] = ($v < 0) * 1000 + ($v == 3) * 100 + (!$v) * 10 + ($v >= 7);
 K
     'stores into int arrays truncate' => <<'K',
+my $x = thread_index();
 $out->[$x] = $in->[$x] / 4;
 K
     'integers wrap around at 32 bits' => <<'K',
+my $x = thread_index();
 my $v = $in->[$x] * 100003;
 my $w = 2147483600 + $in->[$x];
 $w += 100;
@@ -25,6 +29,7 @@ $w++;
 $out->[$x] = $v * $v + -$w + 3 ** 25;
 K
     'modulus by zero is 0' => <<'K',
+my $x = thread_index();
 my $d = $in->[$x] % 3;
 $out->[$x] = 7 % $d + $in->[$x] % ($d - $d) + $in->[$x] % -1 + (-2147483647 - 1) % -1 + $in->[$x] % -7;
 K
@@ -37,7 +42,7 @@ subtest 'division by zero gives inf and nan' => sub {
             engine   => $engine,
             argument => [ in => 'i', out => 'f' ],
             retval   => ['out'],
-            source   => 'my $d = $in->[$x] % 3; $out->[$x] = $in->[$x] / $d;',
+            source   => 'my $x = thread_index(); my $d = $in->[$x] % 3; $out->[$x] = $in->[$x] / $d;',
         );
         $result{$engine} = $r->run([ -4 .. 4 ], []);
     }
@@ -50,7 +55,8 @@ subtest 'mode => fast' => sub {
         engine   => 'perl',
         argument => [ in => 'f', out => 'f' ],
         retval   => ['out'],
-        source   => 'my $s = 0.0; for my $i (1 .. 100) { $s += $in->[$x] / $i; } $out->[$x] = $s;',
+        source   =>
+            'my $x = thread_index(); my $s = 0.0; for my $i (1 .. 100) { $s += $in->[$x] / $i; } $out->[$x] = $s;',
     );
     my $compat = PerCUDA->new(%args);
     my $fast   = PerCUDA->new(%args, mode => 'fast');
@@ -84,7 +90,8 @@ subtest 'arrays outside retval are not modified' => sub {
             engine   => $engine,
             argument => [ in => 'i', tmp => 'i', unused => 'i', out => 'i' ],
             retval   => ['out'],
-            source   => '$tmp->[$x] = $in->[$x] * 2; $out->[$x] = $tmp->[$x] + 1 + $unused->[$x];',
+            source   =>
+                'my $x = thread_index(); $tmp->[$x] = $in->[$x] * 2; $out->[$x] = $tmp->[$x] + 1 + $unused->[$x];',
         );
         my ($in, $tmp, $unused) = ([ 1 .. 4 ], [ (9) x 4 ], []);
         is scalar $r->run($in, $tmp, $unused, []), [ 3, 5, 7, 9 ], "$engine: result";
@@ -100,7 +107,7 @@ subtest 'empty output is zero filled' => sub {
             argument => [ in => 'i', out => 'i' ],
             size     => 'in',
             retval   => ['out'],
-            source   => '$out->[$x] = 1 if $x % 2;',
+            source   => 'my $x = thread_index(); $out->[$x] = 1 if $x % 2;',
         );
         is scalar $r->run([ 1 .. 4 ], []), [ 0, 1, 0, 1 ], $engine;
     }
@@ -108,11 +115,11 @@ subtest 'empty output is zero filled' => sub {
 
 subtest 'elements the kernel does not write keep their values' => sub {
     my %covered = (
-        'every element written'      => [ '$out->[$x] = $x;',                   [ 0, 1,  2,  3 ] ],
-        'return before the store'    => [ 'return if $x % 2; $out->[$x] = $x;', [ 0, 9,  2,  9 ] ],
-        'store under a condition'    => [ 'if ($x > 1) { $out->[$x] = $x; }',   [ 9, 9,  2,  3 ] ],
-        'store reads the old value'  => [ '$out->[$x] += $x;',                  [ 9, 10, 11, 12 ] ],
-        'store into another element' => [ '$out->[3 - $x] = $x if $x < 2;',     [ 9, 9,  1,  0 ] ],
+        'every element written'   => [ 'my $x = thread_index(); $out->[$x] = $x;',                   [ 0, 1, 2, 3 ] ],
+        'return before the store' => [ 'my $x = thread_index(); return if $x % 2; $out->[$x] = $x;', [ 0, 9, 2, 9 ] ],
+        'store under a condition' => [ 'my $x = thread_index(); if ($x > 1) { $out->[$x] = $x; }',   [ 9, 9, 2, 3 ] ],
+        'store reads the old value'  => [ 'my $x = thread_index(); $out->[$x] += $x;',              [ 9, 10, 11, 12 ] ],
+        'store into another element' => [ 'my $x = thread_index(); $out->[3 - $x] = $x if $x < 2;', [ 9, 9,  1,  0 ] ],
     );
     for my $name (sort keys %covered) {
         my ($source, $expected) = @{ $covered{$name} };
@@ -131,6 +138,7 @@ subtest 'elements the kernel does not write keep their values' => sub {
 
 subtest 'precision => double' => sub {
     my $source = <<'K';
+my $x = thread_index();
 my $s = 0.0;
 for my $i (1 .. 1000) { $s += 0.1 * $in->[$x]; }
 $out->[$x] = $s;
@@ -161,7 +169,12 @@ K
         cmp_ok $max_err->($gpu->{single}), '>', 1e-6, 'single drifts from double';
     }
     like dies {
-        PerCUDA->new(engine => 'perl', precision => 'half', argument => [ a => 'f' ], source => '$a->[$x] = 1;')
+        PerCUDA->new(
+            engine    => 'perl',
+            precision => 'half',
+            argument  => [ a => 'f' ],
+            source    => 'my $x = thread_index(); $a->[$x] = 1;'
+        )
     }, qr/precision must be/, 'rejects unknown precision';
 };
 

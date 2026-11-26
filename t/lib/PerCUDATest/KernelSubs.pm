@@ -7,10 +7,12 @@ use PerCUDA;
 my $unrelated = 'sub scale is mentioned here, before the real one';
 
 sub scale : GPU(float, float, float, { retval => [] }) ($in, $out, $s) {
+    my $x = thread_index();
     $out->[$x] = $in->[$x] * $s;
 }
 
 sub twice : GPU ($out, $in) {
+    my $x = thread_index();
     $out->[$x] = $in->[$x] * 2;
 }
 

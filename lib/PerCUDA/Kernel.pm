@@ -276,7 +276,8 @@ PerCUDA::Kernel - Kernels written as subs with the :GPU attribute
     use PerCUDA;
 
     sub add :GPU(float, float, float) ($a, $b, $out) {
-        $out->[$x][$y] = $a->[$x][$y] + $b->[$x][$y];
+        my ($i, $j) = thread_index();
+        $out->[$i][$j] = $a->[$i][$j] + $b->[$i][$j];
     }
 
     my $sum = add($p, $q, []);

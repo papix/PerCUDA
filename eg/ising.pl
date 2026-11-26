@@ -20,6 +20,8 @@ $sweeps //= 2000;    # half for equilibration, half for measurement
 
 # The spins are an int array (+1 or -1); p4 and p8 are float acceptance probabilities.
 sub metropolis : GPU({ argument => [ spin => 'int', parity => 'int' ] }) ($spin, $parity, $seed, $step, $p4, $p8) {
+    my ($x,      $y)      = thread_index();
+    my ($size_x, $size_y) = grid_size();
     if (($x + $y) % 2 == $parity) {
         my $s = $spin->[$x][$y];
         my $neighbours =

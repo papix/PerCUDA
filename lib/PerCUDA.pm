@@ -254,8 +254,8 @@ sub array (@args) {
     return PerCUDA::Kernel->package_context(scalar caller)->array(_function_args(@args));
 }
 
-# use PerCUDA: subs with the :GPU attribute run as kernels, and $x, $y, ...
-# compile in them (use PerCUDA () does neither).
+# use PerCUDA: subs with the :GPU attribute run as kernels, and
+# thread_index() and grid_size() compile in them (use PerCUDA () does neither).
 # use PerCUDA qw(configure array runner): also import those functions.
 # use PerCUDA { options }: also configure(options) when compiling, like
 # use Getopt::Long qw(:config ...).
@@ -417,11 +417,12 @@ PerCUDA - GPGPU framework for Perl: write CUDA kernels in Perl
 
     # A kernel is a sub: its body runs once per element of the grid, on the GPU.
     sub matmul :GPU ($a, $b, $c, $n) {
+        my ($i, $j) = thread_index();    # this thread's element
         my $sum = 0.0;
         for (my $k = 0; $k < $n; $k++) {
-            $sum += $a->[$x][$k] * $b->[$k][$y];
+            $sum += $a->[$i][$k] * $b->[$k][$j];
         }
-        $c->[$x][$y] = $sum;
+        $c->[$i][$j] = $sum;
     }
 
     my $m = [ [ 1 .. 3 ], [ 4 .. 6 ], [ 7 .. 9 ] ];
@@ -429,7 +430,7 @@ PerCUDA - GPGPU framework for Perl: write CUDA kernels in Perl
     my $same    = matmul(a => $m, b => $m, n => 3);     # named; outputs may be omitted
 
 Nothing else needs saying: the types (float arrays, C<$n> an int as a loop
-bound), the grid (2-dimensional because the kernel uses C<$y>, the shape of
+bound), the grid (2-dimensional because C<thread_index()> gives two values, the shape of
 C<$a>), the result (the written C<$c>) and the engine (the GPU when there is
 one, otherwise perl, with the same results) all have defaults. Options go in
 a hash after the types, if any:
@@ -441,7 +442,7 @@ and device arrays keep data on the GPU between calls:
 
     configure(engine => $ARGV[0], precision => 'double');
 
-    sub decay :GPU ($u, $rate) { $u->[$x][$y] *= 1.0 - $rate }
+    sub decay :GPU ($u, $rate) { my ($i, $j) = thread_index(); $u->[$i][$j] *= 1.0 - $rate }
 
     my $u = array([ map { [ (1) x 512 ] } 1 .. 512 ]);    # double, on the device
     decay($u, 0.01) for 1 .. 100;
@@ -458,9 +459,12 @@ scripts can be developed and tested on machines without a GPU.
     kernel (Perl) -> AST -> CUDA C++ -> NVRTC -> cubin (cached) -> CUDA::DriverAPI -> GPU
                          -> Perl (thread loops, GPU semantics) -> perl interpreter
 
-The kernel body runs once per thread. C<$x>, C<$y> and C<$z> hold the thread
-index and C<$size_x>, C<$size_y> and C<$size_z> the grid size (up to C<dim>
-axes). The grid size is the shape of the C<size> argument.
+The kernel body runs once per thread, like the body of nested loops over
+the grid run in parallel. Each thread reads its index with
+C<my ($i, $j) = thread_index();> and may read the grid size with
+C<my ($ni, $nj) = grid_size();> (see L</Thread index>). The grid has as many
+dimensions (1 to 3) as C<thread_index()> gives values, and its size is the
+shape of the C<size> argument.
 
 This is a rebuild of the framework described in "PerCUDA: CUDA Binding
 Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
@@ -484,21 +488,19 @@ C<int>, C<float> and C<double> (or C<i>, C<f> and C<d> for short). A
 parameter used with subscripts in the kernel is an array (up to 3
 dimensions); otherwise it is a scalar.
 
-=item C<dim>: 1, 2 or 3. By default, the number of sizes in C<size> when
-it is a list, otherwise 3 if the kernel uses C<$z> or C<$size_z>, 2 if it
-uses C<$y> or C<$size_y>, and 1 otherwise (variables the kernel declares or
-takes as arguments do not count).
-
 =item C<size>: the grid size. Either the name of the array argument whose
 shape it is, the name of an C<int> scalar argument (a 1-dimensional grid of
 that size), or a list of sizes, each an integer or the name of an C<int>
 scalar argument, e.g. C<< size => [ 'n', 3 ] >>. The scalar and list forms
-let every array start empty, e.g. a kernel that only generates data.
+let every array start empty, e.g. a kernel that only generates data. A
+list must have as many sizes as C<thread_index()> gives values (a kernel
+without C<thread_index()> or C<grid_size()> takes its dimensions from the
+list, otherwise it is 1-dimensional).
 
 By default, each C<run> takes the shape of the first array passed non-empty
-among: the arrays the kernel reads that have at least C<dim> dimensions, the
-other arrays with at least C<dim> dimensions (in declaration order within
-each group; arrays with fewer dimensions only when no array has C<dim>).
+among: the arrays the kernel reads that have at least as many dimensions as
+the grid, the other arrays with that many (in declaration order within
+each group; arrays with fewer dimensions only when no array has enough).
 When all of them are empty, C<run> dies instead of running no thread. So the output can come first and be passed empty,
 as in C<< run([], $in) >>. Give C<size> when the grid is not the shape of
 the first input, e.g. a kernel whose first input is a lookup table.
@@ -547,16 +549,18 @@ and 2.7 times in double precision for a kernel made of little else).
 =back
 
 =item C<perl_jobs>: number of processes for the perl engine, or C<auto> for
-one per CPU (default 1). The rows of the grid (C<$x>) are dealt out to
-forked processes, which send back their rows of the C<retval> arrays; results
-are the same as with one process. Only kernels whose stores all use C<$x> as
-the first index are split; others run in one process.
+one per CPU (default 1). The rows of the grid (the first value of
+C<thread_index()>) are dealt out to forked processes, which send back their
+rows of the C<retval> arrays; results are the same as with one process. Only
+kernels whose stores all use that value, unchanged, as the first index are
+split; others run in one process.
 
 =item C<check>: true to check every array index (default off). An index out
 of range on either engine makes C<run> die with the array, the dimension, the
-index, the valid range, the kernel line and the thread, e.g.
+index, the valid range, the kernel line and the thread (by the names
+C<thread_index()> gives it), e.g.
 
-    PerCUDA: index out of range at kernel line 3: $in, dimension 1, index 3 is not in 0 .. 2 (thread $x=0, $y=1)
+    PerCUDA: index out of range at kernel line 3: $in, dimension 1, index 3 is not in 0 .. 2 (thread $i=0, $j=1)
 
 Indices are truncated toward zero first, as in C. When several accesses are
 out of range, the GPU reports one of them (threads run in parallel) and perl
@@ -591,8 +595,8 @@ and scalars.
 
 Any array argument can also be a L<PDL> ndarray, mixed freely with nested
 arrays. Dimensions are listed outermost first in PerCUDA, which is the
-reverse of C<< $ndarray->dims >>: C<< $a->[$x][$y] >> in a kernel is
-C<< $ndarray->at($y, $x) >>. The GPU engine copies ndarrays without any
+reverse of C<< $ndarray->dims >>: C<< $a->[$i][$j] >> in a kernel is
+C<< $ndarray->at($j, $i) >>. The GPU engine copies ndarrays without any
 per-element conversion, which makes it many times faster than nested arrays
 (see L</PERFORMANCE>); an input ndarray of another type is converted. A
 C<retval> ndarray is reshaped and filled in place, fastest when it has the
@@ -645,7 +649,7 @@ unless every element is nan; reductions of an empty array give 0 (C<sum>)
 or undef.
 
     my $hit = $runner->array(type => 'int', dims => [$samples]);
-    $runner->run($hit, $seed);              # $hit->[$x] = random(...) < ... ? 1 : 0
+    $runner->run($hit, $seed);              # $hit->[$i] = random(...) < ... ? 1 : 0
     my $pi = 4 * $hit->sum / $samples;
 
 =item C<< PerCUDA->context(%args) >>
@@ -677,7 +681,7 @@ L<Getopt::Long>'s C<Configure> (C<use PerCUDA qw(configure array runner)>):
 
 =item C<< use PerCUDA { %args } >>
 
-Options of C<new> (but the per-kernel C<source>, C<argument>, C<dim>,
+Options of C<new> (but the per-kernel C<source>, C<argument>,
 C<size> and C<retval>) for every C<:GPU> sub of the calling package, decided
 at run time, e.g. C<< configure(engine => $engine, precision => 'double') >>
 (the global settings of Taichi's C<ti.init>, per package). The engine is
@@ -710,7 +714,8 @@ C<< source => sub (...) { ... } >>:
     use PerCUDA;
 
     sub saxpy ($a, $xs, $ys, $out) {
-        $out->[$x] = $a * $xs->[$x] + $ys->[$x];
+        my $i = thread_index();
+        $out->[$i] = $a * $xs->[$i] + $ys->[$i];
     }
     my $runner = PerCUDA->new(source => \&saxpy);
     my $result = $runner->run(2, [ 1, 2 ], [ 10, 20 ], []);    # [ 12, 24 ]
@@ -719,7 +724,8 @@ or give it the C<:GPU> attribute, and calling it runs the kernel (calling it
 is C<< $runner->run(@_) >>):
 
     sub saxpy :GPU ($a, $xs, $ys, $out) {
-        $out->[$x] = $a * $xs->[$x] + $ys->[$x];
+        my $i = thread_index();
+        $out->[$i] = $a * $xs->[$i] + $ys->[$i];
     }
     my $result = saxpy(2, [ 1, 2 ], [ 10, 20 ], []);
 
@@ -742,7 +748,7 @@ them, in order, in the C<:GPU> attribute:
 =head2 Options
 
 The C<:GPU> attribute takes the types, if any, then a hash of the options of
-C<new>, written as for C<new> (C<argument>, C<dim>, C<size>, C<retval>,
+C<new>, written as for C<new> (C<argument>, C<size>, C<retval>,
 C<constant>, C<precision>, C<mode>, C<engine>, C<check>, C<perl_jobs>,
 C<cache_dir> and C<device>), like a function signature followed by keyword
 arguments in Numba's C<@cuda.jit>:
@@ -750,9 +756,13 @@ arguments in Numba's C<@cuda.jit>:
     use constant SCALE => 0.5;
 
     sub scale :GPU({ precision => 'double' }) ($in, $out) {
-        $out->[$x] = $in->[$x] * SCALE;
+        my $i = thread_index();
+        $out->[$i] = $in->[$i] * SCALE;
     }
-    sub table :GPU(int, int, { size => [ 'n', 3 ] }) ($out, $n) { $out->[$x][$y] = $x * 10 + $y }
+    sub table :GPU(int, int, { size => [ 'n', 3 ] }) ($out, $n) {
+        my ($i, $j) = thread_index();
+        $out->[$i][$j] = $i * 10 + $j;
+    }
 
     my $scaled = scale([ 1, 2, 3 ], []);    # [ 0.5, 1, 1.5 ]
     my $t      = table([], 2);              # [ [ 0, 1, 2 ], [ 10, 11, 12 ] ]
@@ -771,7 +781,7 @@ arrays to match:
     my ($u, $v) = map { array(dims => [ $n, $n ]) } 1 .. 2;
     for (1 .. 100) { step($u, $v, 0.24); ($u, $v) = ($v, $u) }
 
-Anything not given (C<dim>, C<size>, C<retval>) is inferred as for C<new>.
+Anything not given (C<size>, C<retval>) is inferred as for C<new>.
 Constants are best written with C<use constant>, as barewords: C<$NAME>
 from C<< constant => { ... } >> would need C<our $NAME> to compile under
 C<strict>.
@@ -785,9 +795,9 @@ C<new> or a C<:GPU> sub is compiled), so it must be in a file (not
 C<perl -e> or a string C<eval>; see L</STRING KERNELS>); it never runs as
 Perl, so it cannot see variables outside the sub (pass them as arguments, or
 use constants). C<use PerCUDA> enables the C<:GPU> attribute in the calling
-package and makes C<$x>, C<$y>, C<$z> and C<$size_x>, C<$size_y>,
-C<$size_z> package variables of it, so that the body compiles under
-C<strict>; C<use PerCUDA ()> does neither. The runner of a C<:GPU> sub is built on the first
+package and imports C<thread_index> and C<grid_size> into it, so that the
+body compiles under C<strict> (called outside a kernel, they die);
+C<use PerCUDA ()> does neither. The runner of a C<:GPU> sub is built on the first
 call; kernel line numbers in errors are lines of the file.
 C<< runner(\&scale) >> returns it, e.g. for C<< ->array >>,
 C<< ->arguments >> or C<< ->cuda_source >>, and
@@ -804,13 +814,30 @@ them:
 
     my $runner = PerCUDA->new(
         argument => [ in => 'float', out => 'float', s => 'float' ],
-        source   => '$out->[$x] = $in->[$x] * $s;',
+        source   => 'my $i = thread_index(); $out->[$i] = $in->[$i] * $s;',
     );
 
 Everything else works as for a kernel sub; constants are only those of
 C<constant>.
 
 =head1 KERNEL LANGUAGE
+
+=head2 Thread index
+
+    my ($i, $j) = thread_index();    # this thread's index, one value per axis
+    my ($ni, $nj) = grid_size();     # the grid size
+    my $i = thread_index();          # 1-dimensional
+
+No variable is declared for the kernel: it reads its index with C<thread_index()> and
+the grid size with C<grid_size()>, as Numba's C<cuda.grid(2)> and
+C<cuda.gridsize(2)> or Warp's C<wp.tid()> do. The number of variables
+(1 to 3) is the number of dimensions of the grid; when both appear, they
+must give the same number. Each may appear once, as a statement of its own
+at the top level of the kernel (not inside a block), and the variables exist
+from there on. Any names will do; the last one runs along CUDA's x axis
+(consecutive threads, coalesced access).
+
+=head2 Statements and expressions
 
 =over 4
 
@@ -839,7 +866,7 @@ engines in every mode); with another exponent it is C<pow>.
 random number in [0, 1), with 24 random bits in single and 53 in double
 precision. It is a counter-based generator: the same arguments always give
 the same number, so pass what makes each draw distinct, e.g.
-C<random($seed, $x, $y, $step)>. It uses 32-bit integer arithmetic only (a
+C<random($seed, $i, $j, $step)>. It uses 32-bit integer arithmetic only (a
 chain of Chris Wellons' triple32 hash), so both engines give the same numbers
 in every mode. It is meant for simulations, not for cryptography.
 
@@ -916,8 +943,8 @@ device arrays (C<< $runner->array >>); the perl engine takes 325 ms with
 C<< perl_jobs => 'auto' >>.
 
 The GPU engine skips work it can prove unnecessary: an output that every
-thread overwrites (C<< $out->[$x][$y] = ... >> at the top level of the
-kernel, before any C<return>) is neither uploaded nor zero filled, and the
+thread overwrites (C<< $out->[$i][$j] = ... >> with C<thread_index()>'s
+variables, at the top level of the kernel, before any C<return>) is neither uploaded nor zero filled, and the
 same array passed for two read-only arguments is uploaded once. Compiled
 kernels and the CUDA context are reused, so only the first C<new> and C<run>
 of a process pay for the CUDA initialization (about 0.15 s).

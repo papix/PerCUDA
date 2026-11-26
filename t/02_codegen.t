@@ -4,10 +4,10 @@ use PerCUDA;
 
 my $runner = PerCUDA->new(
     engine   => 'perl',
-    dim      => 2,
     argument => [ a => 'f', out => 'i', n => 'i' ],
     retval   => ['out'],
     source   => <<'K',
+my ($x, $y) = thread_index();
 my $i = 0;
 my $f = 0;
 $f = $f + $a->[$x][$y] / 2;
@@ -40,8 +40,13 @@ subtest 'Perl' => sub {
 
 subtest 'write analysis' => sub {
     my sub analyze ($source) {
-        my $ast = PerCUDA::Parser->new(source => $source)->parse;
-        return PerCUDA::Analyzer->new(ast => $ast, dim => 2, arguments => [ [ a => 'f' ], [ out => 'f' ] ]);
+        my $ast = PerCUDA::Parser->new(source => 'my ($x, $y) = thread_index(); ' . $source)->parse;
+
+        # the analyzer takes the dimension count that the kernel declares
+        return PerCUDA::Analyzer->new(
+            ast => $ast,
+            'dim', PerCUDA::Analyzer::index_dim($ast), arguments => [ [ a => 'f' ], [ out => 'f' ] ]
+        );
     }
     my sub covered ($source) { return analyze($source)->args->[1]{covered} }
 

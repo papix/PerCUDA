@@ -18,6 +18,7 @@ GetOptions(
 ) or die "usage: $0 [--size N] [--perl-size N] [--runs N]\n";
 
 my $KERNEL = <<'KERNEL';
+my $x = thread_index();
 my $v = $in->[$x];
 my $s = 0.0;
 for my $k (1 .. 8) {

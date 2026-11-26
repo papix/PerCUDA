@@ -5,7 +5,12 @@ use PerCUDATest;
 use PerCUDA;
 
 my sub runner ($engine, $type, %args) {
-    return PerCUDA->new(engine => $engine, argument => [ a => $type ], source => '$a->[$x] = 1;', %args);
+    return PerCUDA->new(
+        engine   => $engine,
+        argument => [ a => $type ],
+        source   => 'my $x = thread_index(); $a->[$x] = 1;',
+        %args
+    );
 }
 my sub same ($p, $g) { return defined $p && defined $g ? ("$p" eq "$g" || $p == $g) : !defined $p && !defined $g }
 
@@ -71,7 +76,7 @@ subtest 'nan, empty arrays' => sub {
 };
 
 subtest 'random' => sub {
-    my $kernel = '$out->[$x][$y] = random($seed, $x, $y);';
+    my $kernel = 'my ($x, $y) = thread_index(); $out->[$x][$y] = random($seed, $x, $y);';
     my %result;
     for my $engine (both_engines()) {
         for my $precision (qw(single double)) {
@@ -80,7 +85,6 @@ subtest 'random' => sub {
                     engine    => $engine,
                     mode      => $mode,
                     precision => $precision,
-                    dim       => 2,
                     argument  => [ out => $precision eq 'single' ? 'f' : 'd', seed => 'i' ],
                     retval    => ['out'],
                     source    => $kernel,
@@ -113,8 +117,13 @@ subtest 'random' => sub {
         $corr += ($ref->[$_] - 0.5) * ($ref->[ $_ + 1 ] - 0.5) / ($n - 1) / (1 / 12) for 0 .. $n - 2;
         ok abs($corr) < 0.02, "$precision: neighbours are uncorrelated ($corr)";
     }
-    like dies { PerCUDA->new(engine => 'perl', argument => [ o => 'f' ], source => '$o->[$x] = random();') },
-        qr/random takes 1 to 4 arguments/, 'random needs a seed';
+    like dies {
+        PerCUDA->new(
+            engine   => 'perl',
+            argument => [ o => 'f' ],
+            source   => 'my $x = thread_index(); $o->[$x] = random();'
+        )
+    }, qr/random takes 1 to 4 arguments/, 'random needs a seed';
 };
 
 done_testing;

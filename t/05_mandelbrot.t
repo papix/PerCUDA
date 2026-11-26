@@ -9,6 +9,8 @@ skip_all 'no GPU' unless gpu_available();
 # The set boundary amplifies any rounding difference, so this checks that
 # both engines round every operation the same way.
 my $KERNEL = <<'K';
+my ($x, $y) = thread_index();
+my ($size_x, $size_y) = grid_size();
 my $cr = -2.0 + 3.0 * $x / $size_x;
 my $ci = -1.5 + 3.0 * $y / $size_y;
 my $zr = 0.0;
@@ -28,7 +30,6 @@ my %result;
 for my $precision (qw(single double)) {
     for my $engine (qw(perl gpu)) {
         my $r = PerCUDA->new(
-            dim       => 2,
             engine    => $engine,
             precision => $precision,
             argument  => [ out => 'i', max => 'i' ],

@@ -24,10 +24,13 @@ use constant PI => 3.14159265358979;
 
 # precision => 'double' (in configure) makes every array and scalar double.
 sub init : GPU ($u, $h) {
+    my ($x, $y) = thread_index();
     $u->[$x][$y] = sin(PI * $x * $h) * sin(PI * $y * $h);
 }
 
 sub step : GPU ($u, $v, $r) {
+    my ($x,      $y)      = thread_index();
+    my ($size_x, $size_y) = grid_size();
     if ($x == 0 || $y == 0 || $x == $size_x - 1 || $y == $size_y - 1) {
         $v->[$x][$y] = 0.0;
     }
@@ -40,6 +43,7 @@ sub step : GPU ($u, $v, $r) {
 }
 
 sub error : GPU ($u, $e, $decay, $h) {
+    my ($x, $y) = thread_index();
     $e->[$x][$y] = abs($u->[$x][$y] - $decay * sin(PI * $x * $h) * sin(PI * $y * $h));
 }
 

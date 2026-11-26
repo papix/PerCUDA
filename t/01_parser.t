@@ -2,11 +2,13 @@ use v5.40;
 use Test2::V0;
 use PerCUDA;
 
+# Every kernel here indexes with $x; the declaration goes on the first line so
+# that line numbers of the kernel are unchanged.
 sub build ($source, %args) {
     return PerCUDA->new(
         engine   => 'perl',
         argument => [ a => 'f', n => 'i' ],
-        source   => $source,
+        source   => 'my $x = thread_index(); ' . $source,
         %args,
     );
 }
@@ -48,9 +50,12 @@ for my $case (@errors) {
     like dies { build($src) }, $re, "rejects: $src";
 }
 
-like dies { build('$a->[$x] = 1;',  argument => [ a => 'q' ]) }, qr/unknown type 'q'/, 'rejects unknown type';
-like dies { build('$a->[$x] = 1;',  argument => [ x => 'f' ]) }, qr/reserved/,         'rejects reserved argument name';
-like dies { build('$a->[$x] = $n;', retval   => ['n']) },        qr/must be an array/, 'retval must be an array';
-like dies { build('$a->[$x] = 1;',  engine   => 'cuda') },       qr/engine must be/,   'rejects unknown engine';
+like dies { build('$a->[$x] = 1;', argument => [ a => 'q' ]) }, qr/unknown type 'q'/, 'rejects unknown type';
+like dies { build('$x->[0] = 1;', argument => [ x => 'f' ]) }, qr/\$x has the name of an argument/,
+    'a declared thread index cannot reuse an argument name';
+ok(PerCUDA->new(engine => 'perl', argument => [ x => 'f' ], source => '$x->[0] = 1;'),
+    'x is not a reserved argument name');
+like dies { build('$a->[$x] = $n;', retval => ['n']) },  qr/must be an array/, 'retval must be an array';
+like dies { build('$a->[$x] = 1;',  engine => 'cuda') }, qr/engine must be/,   'rejects unknown engine';
 
 done_testing;
