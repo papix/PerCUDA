@@ -2,6 +2,9 @@ package PerCUDA::Parser;
 use v5.40;
 use Carp ();
 
+# Errors point at the caller of PerCUDA->new (or of a :GPU sub).
+our @CARP_NOT = qw(PerCUDA PerCUDA::Kernel PerCUDA::Context);
+
 # Parses the Perl subset accepted in PerCUDA kernels into an AST.
 #
 # Statements: { t => 'my' | 'expr' | 'if' | 'for' | 'foreach' | 'while' | 'block'
@@ -398,6 +401,11 @@ sub _primary ($self) {
     }
     if ($tok->{type} eq 'ident') {
         $self->_next;
+
+        # a bareword that is not a function: a constant (constant => { NAME
+        # => ... } or, for a kernel sub, use constant NAME => ... in its package)
+        return { t => 'const', name => $tok->{value}, line => $tok->{line} }
+            if !$BUILTIN{ $tok->{value} } && !$self->_is(op => '(');
         Carp::croak("PerCUDA: function '$tok->{value}' is not supported in kernels at line $tok->{line}")
             unless $BUILTIN{ $tok->{value} };
         my ($min, $max) =

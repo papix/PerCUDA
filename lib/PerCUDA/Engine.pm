@@ -3,13 +3,14 @@ use v5.40;
 use Carp         ();
 use Scalar::Util qw(blessed refaddr);
 use PerCUDA::Array;
-use PerCUDA::Data qw(shape is_ndarray check_ndarray_type);
+use PerCUDA::Data qw(shape is_ndarray type_name);
 
 our @CARP_NOT = qw(PerCUDA PerCUDA::Runtime);
 
 # Base class of the engines. Both engines share the calling convention of
 # run: one value per argument, empty arrays take the shape of the size
-# argument and are zero filled, and only retval arrays change for the caller.
+# argument and are zero filled, and only retval arrays change for the caller
+# (by default, every array the kernel writes; see PerCUDA->new).
 # PerCUDA::Array values stay with the engine and are used in place.
 
 sub new ($class, %args) {
@@ -23,7 +24,17 @@ sub new ($class, %args) {
     return $self;
 }
 
-sub init ($self) { }
+sub init ($self) { $self->init_storage; return }
+
+# An engine without a kernel, which only makes and reduces device arrays
+# (PerCUDA::Context->array).
+sub storage ($class, %args) {
+    my $self = bless {%args}, $class;
+    $self->init_storage;
+    return $self;
+}
+
+sub init_storage ($self) { }
 
 # The error of check => 1, the same on both engines.
 sub out_of_range ($name, $line, $thread, $axis, $index, $size) {
@@ -58,18 +69,60 @@ sub array_shape ($self, $data, $dims) {
     return (undef, [@$dims], scalar @$dims);
 }
 
+# Whether an array argument has elements ([[]] has none).
+sub _non_empty ($value, $rank) {
+    return 1             if is_device_array($value);
+    return $value->nelem if is_ndarray($value);
+    for (1 .. $rank) {
+        return 0 unless ref $value eq 'ARRAY' && @$value;
+        $value = $value->[0];
+    }
+    return 1;
+}
+
 # Validates @values and returns
 # { grid => [ size per axis ], arrays => { index => { dims => [...], empty, ndarray, device } } }
 # Array arguments are nested array references, PDL ndarrays or
 # PerCUDA::Array objects; dims are outermost first in all cases.
 sub layout ($self, $values) {
-    my $size_index = $self->{index}{ $self->{size} };
-    my $size_arg   = $self->{args}[$size_index];
-    my $size_value = $values->[$size_index];
-    my $size_dims =
-        is_device_array($size_value) ? $size_value->dims : shape($size_value, $size_arg->{rank} || $self->{dim});
-    Carp::croak("PerCUDA: size argument '$self->{size}' has fewer than $self->{dim} dimensions")
-        if @$size_dims < $self->{dim};
+    my $size_dims;
+    if (ref $self->{size}) {    # integers and scalar argument names
+        $size_dims = [
+            map {
+                my $n = /\A[0-9]+\z/ ? $_ : $values->[ $self->{index}{$_} ];
+                Carp::croak("PerCUDA: size '$_' must be a non-negative integer, not " . ($n // 'undef'))
+                    unless defined $n && !ref $n && $n =~ /\A\s*\+?[0-9]+\s*\z/;
+                $n + 0;
+            } @{ $self->{size} }
+        ];
+    }
+    else {
+        my $name = $self->{size};
+        if ($self->{candidates}) {    # inferred: the first candidate passed non-empty
+            ($name) =
+                grep { _non_empty($values->[ $self->{index}{$_} ], $self->{args}[ $self->{index}{$_} ]{rank}) }
+                @{ $self->{candidates} };
+            Carp::croak('PerCUDA: no array with '
+                    . $self->{dim}
+                    . ' or more dimensions was passed with elements to give the grid ('
+                    . join(', ', map { "'$_'" } @{ $self->{candidates} })
+                    . " were empty); pass one, or give 'size'")
+                unless defined $name;
+        }
+        my $size_index = $self->{index}{$name};
+        my $size_arg   = $self->{args}[$size_index];
+        my $size_value = $values->[$size_index];
+        if (defined $size_value && !ref $size_value && $size_arg->{kind} eq 'unused') {    # a number: a 1-D grid
+            Carp::croak("PerCUDA: size '$name' must be a non-negative integer, not $size_value")
+                unless $size_value =~ /\A\s*\+?[0-9]+\s*\z/;
+            Carp::croak("PerCUDA: size '$name' gives 1 dimension but dim is $self->{dim}") unless $self->{dim} == 1;
+            $size_dims = [ $size_value + 0 ];
+        }
+        $size_dims //=
+            is_device_array($size_value) ? $size_value->dims : shape($size_value, $size_arg->{rank} || $self->{dim});
+        Carp::croak("PerCUDA: size argument '$name' has fewer than $self->{dim} dimensions")
+            if @$size_dims < $self->{dim};
+    }
 
     my (%arrays, %device_args);
     for my $i (0 .. $#{ $self->{args} }) {
@@ -78,7 +131,10 @@ sub layout ($self, $values) {
         if ($arg->{kind} eq 'array' && ref $value ne 'ARRAY' && is_device_array($value)) {
             Carp::croak("PerCUDA: array '$arg->{name}' belongs to the $value->{engine} engine, not " . $self->name)
                 unless $value->{engine} eq $self->name;
-            Carp::croak("PerCUDA: array '$arg->{name}' must be of type $arg->{type}, not $value->{type}")
+            Carp::croak("PerCUDA: array '$arg->{name}' must be of type "
+                    . type_name($arg->{type})
+                    . ", not "
+                    . type_name($value->{type}))
                 unless $value->{type} eq $arg->{type};
             Carp::croak("PerCUDA: array '$arg->{name}' must have $arg->{rank} dimensions")
                 unless @{ $value->{dims} } == $arg->{rank};
@@ -101,7 +157,6 @@ sub layout ($self, $values) {
                     if $arg->{rank} > @$size_dims;
                 $dims = [ @{$size_dims}[ 0 .. $arg->{rank} - 1 ] ];
             }
-            check_ndarray_type($value, $arg->{type}, $arg->{name}) if $ndarray && $self->{is_retval}{ $arg->{name} };
             $arrays{$i} = { dims => $dims, empty => $empty, ndarray => $ndarray };
         }
         elsif ($arg->{kind} eq 'scalar') {

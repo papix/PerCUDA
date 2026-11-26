@@ -4,37 +4,39 @@ PerCUDA - GPGPU framework for Perl: write CUDA kernels in Perl
 
 # SYNOPSIS
 
-    use PerCUDA;
+    use PerCUDA qw(:kernel configure array);
 
-    my $array = [
-        [ 1 .. 3 ],
-        [ 4 .. 6 ],
-        [ 7 .. 9 ],
-    ];
-
-    my $runner = PerCUDA->new(
-        dim      => 2,          # dimensions of the thread grid
-        size     => 'array1',   # argument whose shape decides the grid size
-        engine   => 'gpu',      # 'gpu', 'perl' or omitted (auto detect)
-        argument => [           # arguments and their types
-            array1 => 'f',
-            array2 => 'f',
-            array3 => 'f',
-            N      => 'i',
-        ],
-        retval => ['array3'],   # arrays returned by run
-        source => <<'KERNEL',   # kernel function written in Perl
-    my $tmp = 0;
-    for (my $i = 0; $i < $N; $i++) {
-        $tmp = $tmp
-            + $array1->[$i]->[$y]
-            * $array2->[$x]->[$i];
+    # A kernel is a sub: its body runs once per element of the grid, on the GPU.
+    sub matmul :GPU ($a, $b, $c, $n) {
+        my $sum = 0.0;
+        for (my $k = 0; $k < $n; $k++) {
+            $sum += $a->[$x][$k] * $b->[$k][$y];
+        }
+        $c->[$x][$y] = $sum;
     }
-    $array3->[$x]->[$y] = $tmp;
-    KERNEL
-    );
 
-    my $retval = $runner->run($array, $array, [], 3);
+    my $m = [ [ 1 .. 3 ], [ 4 .. 6 ], [ 7 .. 9 ] ];
+    my $product = matmul($m, $m, [], 3);                # [ [ 30, 36, 42 ], ... ]
+    my $same    = matmul(a => $m, b => $m, n => 3);     # named; outputs may be omitted
+
+Nothing else needs saying: the types (float arrays, `$n` an int as a loop
+bound), the grid (2-dimensional because the kernel uses `$y`, the shape of
+`$a`), the result (the written `$c`) and the engine (the GPU when there is
+one, otherwise perl, with the same results) all have defaults. Options go in
+a hash after the types, if any:
+
+    sub histogram :GPU(int, int, { retval => [] }) ($labels, $counts) { ... }
+
+Options known only at run time apply to all the `:GPU` subs of a package,
+and device arrays keep data on the GPU between calls:
+
+    configure(engine => $ARGV[0], precision => 'double');
+
+    sub decay :GPU ($u, $rate) { $u->[$x][$y] *= 1.0 - $rate }
+
+    my $u = array([ map { [ (1) x 512 ] } 1 .. 512 ]);    # double, on the device
+    decay($u, 0.01) for 1 .. 100;
+    my $total = $u->sum;
 
 # DESCRIPTION
 
@@ -58,19 +60,50 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
 # METHODS
 
 - `PerCUDA->new(%args)`
-    - `source` (required): the kernel body.
-    - `argument` (required): `[ name => type, ... ]`. Types are `i` (int),
-    `f` (float) and `d` (double). An argument used with subscripts in the
-    kernel is an array (up to 3 dimensions); otherwise it is a scalar.
-    - `dim`: 1, 2 or 3 (default 1).
-    - `size`: the array argument whose shape is the grid size (default: the
-    first array argument).
-    - `retval`: array arguments returned by `run`.
-    - `engine`: `gpu` or `perl`. When omitted, the GPU is used if
-    [CUDA::DriverAPI](https://metacpan.org/pod/CUDA%3A%3ADriverAPI) and a CUDA device are available.
+    - `source` (required): the kernel, a sub (`\&name` or
+    `sub (...) { ... }`; see ["KERNEL SUBS"](#kernel-subs)). A string also works (see
+    ["STRING KERNELS"](#string-kernels)).
+    - `argument`: `[ name => type, ... ]`, the types of some
+    parameters (any order); the others get defaults (see ["Types"](#types)). Types are
+    `int`, `float` and `double` (or `i`, `f` and `d` for short). A
+    parameter used with subscripts in the kernel is an array (up to 3
+    dimensions); otherwise it is a scalar.
+    - `dim`: 1, 2 or 3. By default, the number of sizes in `size` when
+    it is a list, otherwise 3 if the kernel uses `$z` or `$size_z`, 2 if it
+    uses `$y` or `$size_y`, and 1 otherwise (variables the kernel declares or
+    takes as arguments do not count).
+    - `size`: the grid size. Either the name of the array argument whose
+    shape it is, the name of an `int` scalar argument (a 1-dimensional grid of
+    that size), or a list of sizes, each an integer or the name of an `int`
+    scalar argument, e.g. `size => [ 'n', 3 ]`. The scalar and list forms
+    let every array start empty, e.g. a kernel that only generates data.
+
+        By default, each `run` takes the shape of the first array passed non-empty
+        among: the arrays the kernel reads that have at least `dim` dimensions, the
+        other arrays with at least `dim` dimensions (in declaration order within
+        each group; arrays with fewer dimensions only when no array has `dim`).
+        When all of them are empty, `run` dies instead of running no thread. So the output can come first and be passed empty,
+        as in `run([], $in)`. Give `size` when the grid is not the shape of
+        the first input, e.g. a kernel whose first input is a lookup table.
+
+    - `retval`: array arguments returned by `run` (default: every array
+    the kernel writes, in declaration order; `retval => []` returns
+    nothing). On the GPU, each nested array or ndarray in `retval` is copied
+    back after the run. When every `retval` is a device array, `run` returns
+    without waiting for the kernel, and a kernel error surfaces at the next
+    `get` or reduction instead (with `retval => []`, `run` waits).
+    - `constant`: `{ NAME => number, ... }`, constants of the kernel
+    in addition to those of the sub's package (`use constant NAME =` ...>),
+    which a kernel sub sees as barewords; `constant` takes precedence. Each
+    `NAME` (or `$NAME`) in the kernel is replaced by the number: an integer in
+    32-bit range becomes an int literal, anything else a float literal (of the
+    `precision`). A different value compiles a different kernel.
+    - `engine`: `gpu` or `perl`. When omitted, `$ENV{PERCUDA_ENGINE}`
+    if set (as Taichi's `TI_ARCH`), otherwise the GPU if [CUDA::DriverAPI](https://metacpan.org/pod/CUDA%3A%3ADriverAPI) and
+    a CUDA device are available.
     - `precision`: `single` (default) or `double`, on both engines. The
-    type of float literals and of locals inferred as floating point (`f` and
-    `d` data keep their declared type). `single` is faster on the GPU.
+    type of float literals and of locals inferred as floating point (`float` and
+    `double` data keep their declared type). `single` is faster on the GPU.
     - `mode`: how closely the two engines agree (see
     ["DIFFERENCES BETWEEN ENGINES"](#differences-between-engines)):
         - `fast`: each engine as fast as it can be. The perl engine skips single
@@ -107,10 +140,13 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     - `device`: CUDA device ordinal (default 0). Runners on the same device
     share one CUDA context.
 - `$runner->run(@values)`
+- `$runner->run(name => $value, ...)`
 
-    Runs the kernel with one value per declared argument, in order. Array
+    Runs the kernel with one value per declared argument, in order, or with
+    named values in any order. With names, an array the kernel never reads (and
+    that is not the `size`) may be left out: it starts empty. Array
     arguments are array references; an empty array reference takes the shape of
-    the `size` argument and is filled with zeros. Returns the `retval` arrays
+    the grid and is filled with zeros. Returns the `retval` arrays
     (the first one in scalar context). The caller's `retval` arrays are also updated
     in place.
 
@@ -124,9 +160,10 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     `$ndarray->at($y, $x)`. The GPU engine copies ndarrays without any
     per-element conversion, which makes it many times faster than nested arrays
     (see ["PERFORMANCE"](#performance)); an input ndarray of another type is converted. A
-    `retval` ndarray must already have the type of its argument (`long`,
-    `float` or `double` for `i`, `f` or `d`) and is reshaped and filled in
-    place; an empty one takes the shape of the `size` argument. The perl engine
+    `retval` ndarray is reshaped and filled in place, fastest when it has the
+    type of its argument (`long`, `float` or `double` for `int`, `float` or
+    `double`); one of another type receives the values converted to its own
+    type. An empty one takes the shape of the grid. The perl engine
     accepts ndarrays too, but unpacks them into nested arrays. PDL is never
     loaded by PerCUDA itself.
 
@@ -138,7 +175,10 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     on the perl engine. It is made from a nested array or ndarray (copied), or
     filled with zeros in the shape `@dims` (outermost first). Any runner on the
     same engine accepts it in place of an array argument of the same type and
-    number of dimensions.
+    number of dimensions. `type` is optional: an ndarray of an integer type
+    (`byte`, `long`, `indx`, ...) makes an `int` array, one of `float` or
+    `double` keeps its type, and anything else is a `float` (a `double` with
+    `precision => 'double'`), like the default type of a kernel sub's arrays.
 
     Runs use it in place: nothing is copied, a kernel that writes it changes it
     (whether or not it is a `retval`), and `run` returns it for a `retval`
@@ -147,8 +187,8 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     contents back with `$array->get`. This removes the transfers from
     repeated runs on the same data:
 
-        my $cur  = $life->array($board, type => 'i');
-        my $next = $life->array(type => 'i', dims => [ 1024, 1024 ]);
+        my $cur  = $life->array($board, type => 'int');
+        my $next = $life->array(type => 'int', dims => [ 1024, 1024 ]);
         for (1 .. 1000) {
             $life->run($cur, $next);
             ($cur, $next) = ($next, $cur);
@@ -168,13 +208,163 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     unless every element is nan; reductions of an empty array give 0 (`sum`)
     or undef.
 
-        my $hit = $runner->array(type => 'i', dims => [$samples]);
+        my $hit = $runner->array(type => 'int', dims => [$samples]);
         $runner->run($hit, $seed);              # $hit->[$x] = random(...) < ... ? 1 : 0
         my $pi = 4 * $hit->sum / $samples;
+
+- `PerCUDA->context(%args)`
+
+    Returns a [PerCUDA::Context](https://metacpan.org/pod/PerCUDA%3A%3AContext): `$context->kernel(%more)` is
+    `PerCUDA->new(%args, %more)`, and `$context->array(...)` makes device
+    arrays without a kernel. The engine is chosen once, so every kernel and
+    array of a context is on the same engine.
+
+- `$runner->arguments`
+
+    The arguments in the order of `run`, with their types:
+    `(name => type, ...)`, e.g. to check the default types of a kernel sub.
 
 - `$runner->engine`, `$runner->cuda_source`, `$runner->perl_source`
 
     The engine in use, and the generated CUDA C++ and Perl code.
+
+# FUNCTIONS
+
+For `:GPU` subs, called as `PerCUDA::name(...)` or imported, like
+[Getopt::Long](https://metacpan.org/pod/Getopt%3A%3ALong)'s `Configure` (`use PerCUDA qw(:kernel configure array runner)`):
+
+- `configure(%args)`
+- `use PerCUDA ':kernel' => { %args }`
+
+    Options of `new` (but the per-kernel `source`, `argument`, `dim`,
+    `size` and `retval`) for every `:GPU` sub of the calling package, decided
+    at run time, e.g. `configure(engine => $engine, precision => 'double')`
+    (the global settings of Taichi's `ti.init`, per package). The engine is
+    chosen once, here. The options in a sub's attribute take precedence (except
+    `engine` and `device`). A `:GPU` sub builds its runner at its first call,
+    and again after the next `configure`. The import form configures when the
+    module is compiled, as `use Getopt::Long qw(:config ...)` does. Returns the
+    [PerCUDA::Context](https://metacpan.org/pod/PerCUDA%3A%3AContext) it makes (or takes, as `configure($context)`).
+
+- `array(...)`
+
+    A device array (as `$runner->array`) on the engine and with the
+    precision of the calling package's configuration, so that its `:GPU` subs
+    accept it.
+
+- `runner(\&name)`
+
+    The runner of a `:GPU` sub, e.g. for `->arguments`, `->engine` or
+    `->cuda_source`.
+
+# KERNEL SUBS
+
+A kernel can be written as a Perl sub with a signature of plain scalars,
+whose body is in the kernel language. The signature gives the arguments and
+the order of `run`. Pass the sub to `new` as `source => \&name` or
+`source => sub (...) { ... }`:
+
+    use PerCUDA ':kernel';
+
+    sub saxpy ($a, $xs, $ys, $out) {
+        $out->[$x] = $a * $xs->[$x] + $ys->[$x];
+    }
+    my $runner = PerCUDA->new(source => \&saxpy);
+    my $result = $runner->run(2, [ 1, 2 ], [ 10, 20 ], []);    # [ 12, 24 ]
+
+or give it the `:GPU` attribute, and calling it runs the kernel (calling it
+is `$runner->run(@_)`):
+
+    sub saxpy :GPU ($a, $xs, $ys, $out) {
+        $out->[$x] = $a * $xs->[$x] + $ys->[$x];
+    }
+    my $result = saxpy(2, [ 1, 2 ], [ 10, 20 ], []);
+
+## Types
+
+A kernel sub needs no types: each parameter without one gets a default.
+Arrays are `float` (`double` with `precision => 'double'`), and so are
+scalars, except those used where CUDA needs an integer, which are `int`: in
+an array index, as an operand of `%` or a bit operation, as an argument of
+`random()`, as the bound of a loop over an int, or as a `size`. Single
+precision is the default because consumer GPUs run `double` many times
+slower. `$runner->arguments` lists the types in use. Give the others in
+`argument => [ name => type, ... ]` (any order, any subset), or all of
+them, in order, in the `:GPU` attribute:
+
+    my $assign = PerCUDA->new(source => \&assign, argument => [ label => 'int', changed => 'int' ]);
+
+    sub add :GPU(float, float, float) ($a, $b, $out) { ... }
+
+## Options
+
+The `:GPU` attribute takes the types, if any, then a hash of the options of
+`new`, written as for `new` (`argument`, `dim`, `size`, `retval`,
+`constant`, `precision`, `mode`, `engine`, `check`, `perl_jobs`,
+`cache_dir` and `device`), like a function signature followed by keyword
+arguments in Numba's `@cuda.jit`:
+
+    use constant SCALE => 0.5;
+
+    sub scale :GPU({ precision => 'double' }) ($in, $out) {
+        $out->[$x] = $in->[$x] * SCALE;
+    }
+    sub table :GPU(int, int, { size => [ 'n', 3 ] }) ($out, $n) { $out->[$x][$y] = $x * 10 + $y }
+
+    my $scaled = scale([ 1, 2, 3 ], []);    # [ 0.5, 1, 1.5 ]
+    my $t      = table([], 2);              # [ [ 0, 1, 2 ], [ 10, 11, 12 ] ]
+
+The hash is evaluated when the sub is compiled, so its values are literals
+(barewords are strings), not variables. Options known only at run time (an
+engine from `@ARGV`, say) go to `configure`, which sets them
+for all the `:GPU` subs of the package; `array` makes device
+arrays to match:
+
+    my ($engine, $n) = @ARGV;
+    configure(engine => $engine, precision => 'double');
+
+    sub step :GPU ($u, $v, $r) { ... }
+
+    my ($u, $v) = map { array(dims => [ $n, $n ]) } 1 .. 2;
+    for (1 .. 100) { step($u, $v, 0.24); ($u, $v) = ($v, $u) }
+
+Anything not given (`dim`, `size`, `retval`) is inferred as for `new`.
+Constants are best written with `use constant`, as barewords: `$NAME`
+from `constant => { ... }` would need `our $NAME` to compile under
+`strict`.
+
+## Notes
+
+In both forms, the sub is not sent to the GPU as a whole: its body is a
+kernel, run once per element of the grid, in the kernel language (see
+["KERNEL LANGUAGE"](#kernel-language)). It is read from the source file (when it is passed to
+`new` or a `:GPU` sub is compiled), so it must be in a file (not
+`perl -e` or a string `eval`; see ["STRING KERNELS"](#string-kernels)); it never runs as
+Perl, so it cannot see variables outside the sub (pass them as arguments, or
+use constants). `:kernel` makes `$x`, `$y`, `$z` and `$size_x`,
+`$size_y`, `$size_z` package variables of the caller, so that the body
+compiles under `strict`. The runner of a `:GPU` sub is built on the first
+call; kernel line numbers in errors are lines of the file.
+`runner(\&scale)` returns it, e.g. for `->array`,
+`->arguments` or `->cuda_source`, and
+`PerCUDA->new(source => \&scale, ...)` makes another one from the
+attribute and the options given (which take precedence).
+
+# STRING KERNELS
+
+Where a kernel sub cannot be read from a file (`perl -e`, a string
+`eval`, a REPL) or the kernel is generated by a program, `source` can be
+the body as a string. `argument` is then required and gives every
+parameter with its type, in the order of `run`, since nothing else names
+them:
+
+    my $runner = PerCUDA->new(
+        argument => [ in => 'float', out => 'float', s => 'float' ],
+        source   => '$out->[$x] = $in->[$x] * $s;',
+    );
+
+Everything else works as for a kernel sub; constants are only those of
+`constant`.
 
 # KERNEL LANGUAGE
 
@@ -187,6 +377,8 @@ cannot declare arrays, hashes or strings.
 - Control: `if`/`elsif`/`else`, `unless`, `for (;;)`,
 `for my $i (A .. B)`, `while`, `until`, `last`, `next`, `return`
 (ends the thread), and statement modifiers `if`/`unless`.
+- Constants: a bareword such as `PI` (or `$PI`) is a constant from
+`constant`, or from `use constant` in the package of a kernel sub.
 - Functions: `sqrt`, `abs`, `int`, `exp`, `log`, `sin`, `cos`,
 `atan2($y, $x)`, and POSIX's `floor` and `ceil`. As on the GPU, `sqrt`
 of a negative number is nan and `log` of 0 is -inf instead of an error.
@@ -209,7 +401,7 @@ Perl.
 The perl engine runs Perl code generated from the same kernel and follows the
 GPU semantics where Perl would differ:
 
-- Single precision values (`f` data and, by default, float locals) are
+- Single precision values (`float` data and, by default, float locals) are
 rounded to single precision after every operation. The GPU code is compiled
 without fused multiply-add, so floating point results match exactly in both
 precisions.
@@ -217,10 +409,11 @@ precisions.
 - Division by zero gives inf, -inf or nan, and modulus by zero gives 0.
 - Comparisons and `!` yield 0 or 1.
 - Bit operations work on 32-bit signed integers.
-- Values are converted like C casts: `i` data is truncated and `f`
+- Values are converted like C casts: `int` data is truncated and `float`
 data is rounded to single precision, including the arrays passed to `run`.
-- Empty arrays are filled with zeros, and only `retval` arrays are
-changed for the caller (other arrays are copied first when needed).
+- Empty arrays are filled with zeros, and only `retval` arrays (by
+default, every array the kernel writes) are changed for the caller (other
+arrays are copied first when needed).
 - `exp`, `log`, `sin`, `cos`, `atan2` and `pow`: with
 `mode => 'exact'`, both engines use [PerCUDA::Math](https://metacpan.org/pod/PerCUDA%3A%3AMath), which is built from
 the operations above only, so results are bit for bit identical. Otherwise the
