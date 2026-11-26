@@ -158,6 +158,33 @@ like dies {
     )
 }, qr/size gives 2 dimension\(s\) but thread_index\(\) gives 1/, 'size must match thread_index';
 
+like dies {
+    PerCUDA->new(
+        engine   => 'perl',
+        size     => [2],
+        argument => [ out => 'int' ],
+        source   => 'my ($ni, $nj) = grid_size(); $out->[0][0] = $ni;'
+    )
+}, qr/size gives 1 dimension\(s\) but grid_size\(\) gives 2/, 'the message names grid_size when only it is declared';
+
+like dies {
+    PerCUDA->new(
+        engine   => 'perl',
+        size     => 'n',
+        argument => [ out => 'int', n => 'int' ],
+        source   => 'my ($ni, $nj) = grid_size(); $out->[0][0] = $ni;'
+    )->run([], 3)
+}, qr/size 'n' gives 1 dimension but grid_size\(\) gives 2/, 'so does the message of a numeric size';
+
+like dies {
+    PerCUDA->new(
+        engine   => 'perl',
+        size     => 'n',
+        argument => [ out => 'int', n => 'int' ],
+        source   => 'my ($ni, $nj) = grid_size(); my ($i, $j) = thread_index(); $out->[$i][$j] = $ni;'
+    )->run([], 3)
+}, qr/size 'n' gives 1 dimension but thread_index\(\) gives 2/, 'thread_index is named when both are declared';
+
 is PerCUDA->new(
     engine   => 'perl',
     size     => [ 2, 3 ],

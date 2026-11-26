@@ -6,7 +6,7 @@ use Symbol        ();
 use Scalar::Util  qw(looks_like_number);
 use PerCUDA::Data ();
 use PerCUDA::Parser;
-use PerCUDA::Analyzer qw(index_dim infer_types);
+use PerCUDA::Analyzer qw(index_dim declared_function infer_types);
 use PerCUDA::CodeGen::CUDA;
 use PerCUDA::CodeGen::Perl;
 use PerCUDA::Engine::Perl;
@@ -141,7 +141,7 @@ sub new ($class, %args) {
         if exists $args{dim};
     my $declared = index_dim($ast);
     my $dim      = $declared // (ref $size ? scalar @$size : 1);
-    Carp::croak("PerCUDA: size gives " . @$size . " dimension(s) but thread_index() gives $dim")
+    Carp::croak("PerCUDA: size gives " . @$size . " dimension(s) but " . declared_function($ast) . " gives $dim")
         if ref $size && @$size != $dim;
 
     my $an  = PerCUDA::Analyzer->new(ast => $ast, dim => $dim, arguments => \@arguments, precision => $precision);

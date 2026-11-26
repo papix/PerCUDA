@@ -118,7 +118,9 @@ sub layout ($self, $values) {
         if (defined $size_value && !ref $size_value && $size_arg->{kind} eq 'unused') {    # a number: a 1-D grid
             Carp::croak("PerCUDA: size '$name' must be a non-negative integer, not $size_value")
                 unless $size_value =~ /\A\s*\+?[0-9]+\s*\z/;
-            Carp::croak("PerCUDA: size '$name' gives 1 dimension but thread_index() gives $self->{dim}")
+            Carp::croak("PerCUDA: size '$name' gives 1 dimension but "
+                    . $self->{analyzer}->index_function
+                    . " gives $self->{dim}")
                 unless $self->{dim} == 1;
             $size_dims = [ $size_value + 0 ];
         }

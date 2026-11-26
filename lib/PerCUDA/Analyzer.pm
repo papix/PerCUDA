@@ -15,7 +15,7 @@ use PerCUDA::Data qw(type_code);
 # PerCUDA::CodeGen::Perl) and the engines work from its result.
 
 our @EXPORT_OK =
-    qw(walk infer_types index_dim substitute_constants is_pure assigned_symbols nonneg_int_literal type_max error);
+    qw(walk infer_types index_dim declared_function substitute_constants is_pure assigned_symbols nonneg_int_literal type_max error);
 
 my %RANK         = (i => 0, f => 1, d => 2);
 my @TYPE_BY_RANK = qw(i f d);
@@ -44,6 +44,10 @@ sub axes ($self) { return @AXES[ 0 .. $self->{dim} - 1 ] }
 
 # The names the kernel gives the thread index, one per axis (undef where it
 # declares none).
+# 'thread_index()' or 'grid_size()': the declaration that gives the
+# dimensions (thread_index() when there are both), for messages.
+sub index_function ($self) { return $self->{index_function} }
+
 sub thread_names ($self) {
     return [ map { $self->{thread_names}[$_] } 0 .. $self->{dim} - 1 ];
 }
@@ -174,6 +178,13 @@ sub index_dim ($ast) {
         if $thread && $grid && @{ $thread->{names} } != @{ $grid->{names} };
     my $decl = $thread // $grid;
     return $decl ? scalar @{ $decl->{names} } : undef;
+}
+
+# The function whose declaration gives the dimensions, as index_dim finds
+# it: 'thread_index()', else 'grid_size()', else undef.
+sub declared_function ($ast) {
+    my %what = map { $_->{what} => 1 } grep { $_->{t} eq 'index' } @{ $ast->{body} };
+    return $what{thread} ? 'thread_index()' : $what{grid} ? 'grid_size()' : undef;
 }
 
 # Replaces each $NAME of %$constants in the kernel with its value, an int
@@ -363,8 +374,10 @@ sub _resolve_stmt ($self, $s) {
     }
     elsif ($t eq 'index') {    # my ($x, $y) = thread_index(); (see index_dim)
         my @names = @{ $s->{names} };
-        error("my (...) = thread_index() gives " . @names . " value(s) but the grid has $self->{dim} dimension(s)", $s)
+        my $func  = $s->{what} eq 'thread' ? 'thread_index()' : 'grid_size()';
+        error("my (...) = $func gives " . @names . " value(s) but the grid has $self->{dim} dimension(s)", $s)
             if @names != $self->{dim};
+        $self->{index_function} = $func if $s->{what} eq 'thread' || !$self->{index_function};
         for my $axis (0 .. $#names) {
             my $name = $names[$axis];
             error("\$$name has the name of an argument", $s) if $self->{scopes}[0]{$name};
