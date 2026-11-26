@@ -10,49 +10,51 @@ use v5.40;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Time::HiRes qw(time);
-use PerCUDA;
+use PerCUDA     qw(configure array runner);
 
 my ($engine, $n, $seed) = @ARGV;
 $n    //= 8_000_000;
 $seed //= 1;
 my ($rate, $volatility) = (0.02, 0.30);
 
-my %common = (engine => $engine, size => 's');
-my $inputs = PerCUDA->new(%common, argument => [ s => 'f', k => 'f', t => 'f', seed => 'i' ], source => <<'KERNEL');
-$s->[$x] = 5.0 + 25.0 * random($seed, $x, 0);
-$k->[$x] = 1.0 + 99.0 * random($seed, $x, 1);
-$t->[$x] = 0.25 + 9.75 * random($seed, $x, 2);
-KERNEL
+sub inputs : GPU ($s, $k, $t, $seed) {
+    $s->[$x] = 5.0 + 25.0 * random($seed, $x, 0);
+    $k->[$x] = 1.0 + 99.0 * random($seed, $x, 1);
+    $t->[$x] = 0.25 + 9.75 * random($seed, $x, 2);
+}
 
 # CND(d) is written out twice: kernels have no subroutines.
-my $cnd = sub ($d, $out) {
-    return <<"KERNEL";
-my \$k_$out = 1.0 / (1.0 + 0.2316419 * abs($d));
-my \$$out = 0.3989422804014327 * exp(-0.5 * $d * $d)
-    * (\$k_$out * (0.31938153 + \$k_$out * (-0.356563782 + \$k_$out * (1.781477937
-    + \$k_$out * (-1.821255978 + \$k_$out * 1.330274429)))));
-\$$out = 1.0 - \$$out if $d > 0;
-KERNEL
-};
-my $price = PerCUDA->new(
-    %common,
-    argument => [ s => 'f', k => 'f', t => 'f', call => 'f', put => 'f', parity => 'f', r => 'f', v => 'f' ],
-    source   => <<'KERNEL' . $cnd->('$d1', 'n1') . $cnd->('$d2', 'n2') . <<'KERNEL2');
-my $sqrt_t = sqrt($t->[$x]);
-my $d1 = (log($s->[$x] / $k->[$x]) + ($r + 0.5 * $v * $v) * $t->[$x]) / ($v * $sqrt_t);
-my $d2 = $d1 - $v * $sqrt_t;
-KERNEL
-my $discounted = $k->[$x] * exp(-$r * $t->[$x]);
-$call->[$x] = $s->[$x] * $n1 - $discounted * $n2;
-$put->[$x] = $discounted * (1.0 - $n2) - $s->[$x] * (1.0 - $n1);
-$parity->[$x] = abs($call->[$x] - $put->[$x] - ($s->[$x] - $discounted)) / $s->[$x];
-KERNEL2
+sub price : GPU ($s, $k, $t, $call, $put, $parity, $r, $v) {
+    my $sqrt_t = sqrt($t->[$x]);
+    my $d1     = (log($s->[$x] / $k->[$x]) + ($r + 0.5 * $v * $v) * $t->[$x]) / ($v * $sqrt_t);
+    my $d2     = $d1 - $v * $sqrt_t;
+    my $k_n1   = 1.0 / (1.0 + 0.2316419 * abs($d1));
+    my $n1     = 0.3989422804014327 * exp(-0.5 * $d1 * $d1) * (
+        $k_n1 * (
+            0.31938153 + $k_n1 * (-0.356563782 + $k_n1 * (1.781477937 + $k_n1 * (-1.821255978 + $k_n1 * 1.330274429)))
+        )
+    );
+    $n1 = 1.0 - $n1 if $d1 > 0;
+    my $k_n2 = 1.0 / (1.0 + 0.2316419 * abs($d2));
+    my $n2   = 0.3989422804014327 * exp(-0.5 * $d2 * $d2) * (
+        $k_n2 * (
+            0.31938153 + $k_n2 * (-0.356563782 + $k_n2 * (1.781477937 + $k_n2 * (-1.821255978 + $k_n2 * 1.330274429)))
+        )
+    );
+    $n2 = 1.0 - $n2 if $d2 > 0;
+    my $discounted = $k->[$x] * exp(-$r * $t->[$x]);
+    $call->[$x]   = $s->[$x] * $n1 - $discounted * $n2;
+    $put->[$x]    = $discounted * (1.0 - $n2) - $s->[$x] * (1.0 - $n1);
+    $parity->[$x] = abs($call->[$x] - $put->[$x] - ($s->[$x] - $discounted)) / $s->[$x];
+}
 
-my ($s, $k, $t, $call, $put, $parity) = map { $price->array(type => 'f', dims => [$n]) } 1 .. 6;
-$inputs->run($s, $k, $t, $seed);
-$price->run($s, $k, $t, $call, $put, $parity, $rate, $volatility);    # warm up
+configure(engine => $engine);
+
+my ($s, $k, $t, $call, $put, $parity) = map { array(dims => [$n]) } 1 .. 6;
+inputs($s, $k, $t, $seed);
+price($s, $k, $t, $call, $put, $parity, $rate, $volatility);    # warm up
 my $start = time;
-$price->run($s, $k, $t, $call, $put, $parity, $rate, $volatility);
+price($s, $k, $t, $call, $put, $parity, $rate, $volatility);
 my $worst_parity = $parity->max;    # waits for the kernel
 my $elapsed = time - $start;
 
@@ -68,7 +70,7 @@ for my $i (0 .. $#$S) {
     $worst = $error if $error > $worst;
 }
 
-printf "engine: %s\n%d options in %.3f ms (%.2f Goptions/s)\n", $price->engine, $n, 1000 * $elapsed,
+printf "engine: %s\n%d options in %.3f ms (%.2f Goptions/s)\n", runner(\&price)->engine, $n, 1000 * $elapsed,
     $n / $elapsed / 1e9;
 printf "max call price error vs exact normal CDF: %.2e; max put-call parity error: %.2e (relative)\n", $worst,
     $worst_parity;

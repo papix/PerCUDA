@@ -45,7 +45,7 @@ sub runner ($engine) {
         engine    => $engine,
         perl_jobs => $perl_jobs,
         size      => 'cur',
-        argument  => [ cur => 'i', next => 'i' ],
+        argument  => [ cur => 'int', next => 'int' ],
         retval    => ['next'],
         source    => $KERNEL,
     );
@@ -95,9 +95,9 @@ my %modes = (
     },
     device => sub {
         my $r = runner('gpu');
-        my ($cur, $next) = ($r->array($board, type => 'i'), $r->array(type => 'i', dims => [ $size, $size ]));
+        my ($cur, $next) = ($r->array($board, type => 'int'), $r->array(type => 'int', dims => [ $size, $size ]));
         $r->run($cur, $next);
-        $cur = $r->array($board, type => 'i');
+        $cur = $r->array($board, type => 'int');
         my $start = time;
         for (1 .. $steps) { $r->run($cur, $next); ($cur, $next) = ($next, $cur) }
         my $result = $cur->get;    # the final board comes back once
