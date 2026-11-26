@@ -10,7 +10,7 @@ use PDL;
 my %args = (
     size     => 'c',
     argument => [ a => 'f', b => 'f', c => 'f', n => 'i' ],
-    retval   => ['c'],
+    returns  => ['c'],
     source   =>
         'my ($x, $y) = thread_index(); my $s = 0.0; for (my $k = 0; $k < $n; $k++) { $s += $a->[$x][$k] * $b->[$k][$y]; } $c->[$x][$y] = $s;',
 );
@@ -66,7 +66,7 @@ subtest 'empty ndarray for the result' => sub {
         my $r = PerCUDA->new(
             engine   => $engine,
             argument => [ in => 'd', out => 'd' ],
-            retval   => ['out'],
+            returns  => ['out'],
             source   => 'my $x = thread_index(); $out->[$x] = $in->[$x] / 2;',
         );
         my $out = zeroes(double, 0);
@@ -80,7 +80,7 @@ subtest 'device arrays from and to ndarrays' => sub {
         my $r = PerCUDA->new(
             engine   => $engine,
             argument => [ in => 'f', out => 'f' ],
-            retval   => ['out'],
+            returns  => ['out'],
             source   => 'my ($x, $y) = thread_index(); $out->[$x][$y] = $in->[$x][$y] * 2;',
         );
         my $in  = $r->array(sequence(float, 3, 2), type => 'f');
@@ -100,7 +100,7 @@ subtest 'size argument as an ndarray' => sub {
             engine   => $engine,
             size     => 'grid',
             argument => [ grid => 'i', out => 'i' ],
-            retval   => ['out'],
+            returns  => ['out'],
             source   => 'my ($x, $y) = thread_index(); $out->[$x][$y] = $x * 10 + $y + $grid->[$x][$y];',
         );
         my $grid = ones(long, 3, 2);
@@ -116,7 +116,7 @@ subtest 'an array made from an ndarray keeps its type' => sub {
     is $pc->array(sequence(indx,   3))->type, 'int',    'indx';
 };
 
-subtest 'written ndarrays are the default retval' => sub {
+subtest 'written ndarrays are the default returns' => sub {
     for my $engine (ndarray_engines()) {
         my $r = PerCUDA->new(
             engine   => $engine,

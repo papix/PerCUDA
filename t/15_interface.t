@@ -30,7 +30,7 @@ for my $engine (both_engines) {
         );
         is $axpy->engine, $engine, 'engine';
 
-        # dim 2 (inferred), retval out (inferred), size a
+        # dim 2 (inferred), returns out (inferred), size a
         my $a = [ [ 1, 2 ], [ 3, 4 ] ];
         my $b = [ [ 1, 1 ], [ 1, 1 ] ];
         is scalar $axpy->run($a, $b, [], 2), [ [ 3, 5 ], [ 7, 9 ] ], 'positional run returns the written array';
@@ -38,7 +38,7 @@ for my $engine (both_engines) {
             'named run in any order; an array never read may be omitted';
         my $out = [];
         $axpy->run(a => $a, b => $b, out => $out, s => 1);
-        is $out, [ [ 2, 3 ], [ 4, 5 ] ], 'a named retval array is filled in place';
+        is $out, [ [ 2, 3 ], [ 4, 5 ] ], 'a named returns array is filled in place';
 
         like dies { $axpy->run(a => $a, s => 2) },  qr/missing argument 'b'/, 'a read array is required';
         like dies { $axpy->run(a => $a, b => $b) }, qr/missing argument 's'/, 'a scalar is required';
@@ -49,10 +49,10 @@ for my $engine (both_engines) {
         my $quiet = PerCUDA->new(
             engine   => $engine,
             argument => [ a => 'f', out => 'f' ],
-            retval   => [],
+            returns  => [],
             source   => 'my $x = thread_index(); $out->[$x] = $a->[$x];'
         );
-        is [ $quiet->run([1], []) ], [], 'retval => [] returns nothing';
+        is [ $quiet->run([1], []) ], [], 'returns => [] returns nothing';
 
         subtest 'the default size comes from an array passed non-empty' => sub {
             my $r = PerCUDA->new(

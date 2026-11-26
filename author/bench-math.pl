@@ -40,7 +40,7 @@ for my $engine ($gpu ? qw(gpu perl) : qw(perl)) {
                 precision => $precision,
                 perl_jobs => 'auto',
                 argument  => [ in => $type, out => $type ],
-                retval    => ['out'],
+                returns   => ['out'],
                 source    => $KERNEL,
             );
             my $in  = $r->array([ map { $_ / $n * 10 } 1 .. $n ], type => $type);

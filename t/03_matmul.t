@@ -21,7 +21,7 @@ sub runner ($engine) {
         size     => 'array1',
         engine   => $engine,
         argument => [ array1 => 'f', array2 => 'f', array3 => 'f', N => 'i' ],
-        retval   => ['array3'],
+        returns  => ['array3'],
         source   => $KERNEL,
     );
 }
@@ -45,10 +45,10 @@ for my $engine (both_engines()) {
     subtest $engine => sub {
         my $r = runner($engine);
         is $r->engine, $engine, 'engine';
-        my $out    = [];
-        my $retval = $r->run($array, $array, $out, 3);
-        is $retval, $expected, '3x3 product';
-        is $out,    $expected, 'retval array is updated in place';
+        my $out     = [];
+        my $returns = $r->run($array, $array, $out, 3);
+        is $returns, $expected, '3x3 product';
+        is $out,     $expected, 'returns array is updated in place';
 
         my $n = 64;
         my $a = [

@@ -22,7 +22,7 @@ my sub life ($engine, %args) {
         engine   => $engine,
         size     => 'cur',
         argument => [ cur => 'i', next => 'i' ],
-        retval   => ['next'],
+        returns  => ['next'],
         source   => $LIFE,
         %args,
     );
@@ -50,7 +50,7 @@ for my $engine (both_engines()) {
         is $next->get,   [ map { [ (0) x 8 ] } 1 .. 6 ], 'dims => [...] makes zeros';
 
         my $result = $r->run($cur, $next);
-        ref_is $result, $next, 'run returns the device array given for the retval';
+        ref_is $result, $next, 'run returns the device array given for the returns';
         ($cur, $next) = ($next, $cur);
         for (2 .. 12) { $r->run($cur, $next); ($cur, $next) = ($next, $cur) }
         is $cur->get, $expected, '12 steps on the device match nested arrays';
@@ -61,7 +61,7 @@ for my $engine (both_engines()) {
         is $glider->[2][2], 1,         'the source array is left unchanged';
 
         is scalar $r->run($r->array($glider, type => 'i'), []), life('perl')->run($glider, []),
-            'a device input with a nested retval';
+            'a device input with a nested returns';
 
         like dies { $r->run($r->array($glider, type => 'f'), $next) }, qr/'cur' must be of type int, not float/,
             'type is checked';
@@ -75,17 +75,17 @@ for my $engine (both_engines()) {
     };
 }
 
-subtest 'mixed with nested arrays, and written device arrays outside retval' => sub {
+subtest 'mixed with nested arrays, and written device arrays outside returns' => sub {
     for my $engine (both_engines()) {
         my $r = PerCUDA->new(
             engine   => $engine,
             argument => [ in => 'f', tmp => 'f', out => 'f' ],
-            retval   => ['out'],
+            returns  => ['out'],
             source   => 'my $x = thread_index(); $tmp->[$x] = $in->[$x] * 2; $out->[$x] = $tmp->[$x] + 1;',
         );
         my $tmp = $r->array(type => 'f', dims => [4]);
-        is scalar $r->run([ 1 .. 4 ], $tmp, []), [ 3, 5, 7, 9 ], "$engine: nested retval";
-        is $tmp->get, [ 2, 4, 6, 8 ], "$engine: a device array is written in place even outside retval";
+        is scalar $r->run([ 1 .. 4 ], $tmp, []), [ 3, 5, 7, 9 ], "$engine: nested returns";
+        is $tmp->get, [ 2, 4, 6, 8 ], "$engine: a device array is written in place even outside returns";
     }
 };
 

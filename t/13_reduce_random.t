@@ -86,7 +86,7 @@ subtest 'random' => sub {
                     mode      => $mode,
                     precision => $precision,
                     argument  => [ out => $precision eq 'single' ? 'f' : 'd', seed => 'i' ],
-                    retval    => ['out'],
+                    returns   => ['out'],
                     source    => $kernel,
                 );
                 $result{$engine}{$precision}{$mode} =

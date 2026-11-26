@@ -19,7 +19,7 @@ sub engine ($self) { return $self->{engine} }
 
 # Copies the contents back: a new nested array, or into the given nested
 # array or ndarray (which must have the matching type), like run does for
-# retval arrays.
+# returned arrays.
 sub get ($self, %args) {
     my $into = $args{into};
     if ($self->{engine} eq 'gpu') {

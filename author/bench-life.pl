@@ -47,7 +47,7 @@ sub runner ($engine) {
         perl_jobs => $perl_jobs,
         size      => 'cur',
         argument  => [ cur => 'int', next => 'int' ],
-        retval    => ['next'],
+        returns   => ['next'],
         source    => $KERNEL,
     );
 }

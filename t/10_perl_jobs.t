@@ -6,7 +6,7 @@ my sub runner ($source, %args) {
     return PerCUDA->new(
         engine   => 'perl',
         argument => [ in => 'i', out => 'f' ],
-        retval   => ['out'],
+        returns  => ['out'],
         source   => $source,
         %args,
     );

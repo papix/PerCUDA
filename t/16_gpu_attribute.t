@@ -336,7 +336,7 @@ subtest 'source file read after chdir' => sub {
 subtest 'kernel subs in a module' => sub {
     require PerCUDATest::KernelSubs;
     my $out = [ 0, 0, 0 ];
-    is [ PerCUDATest::KernelSubs::scale([ 1, 2, 3 ], $out, 2) ], [], 'retval => [] returns nothing';
+    is [ PerCUDATest::KernelSubs::scale([ 1, 2, 3 ], $out, 2) ], [], 'returns => [] returns nothing';
     is $out, [ 0, 0, 0 ], 'and leaves the caller\'s array alone';
     is scalar PerCUDATest::KernelSubs::twice([], [ 1, 2, 3 ]), [ 2, 4, 6 ],
         'the output first: the grid comes from the input';
@@ -360,7 +360,7 @@ subtest 'attribute' => sub {
     ($types, $options) = PerCUDA::Kernel::parse_attribute(<<'ATTR');
 float, int, {
     precision => double, constant => { PI => 3.14159, N => -2 },
-    size => [ 'n', 3 ], retval => [qw(out)], check => 1
+    size => [ 'n', 3 ], returns => [qw(out)], check => 1
 }
 ATTR
     is $types, [qw(f i)], 'types over several lines';
@@ -369,7 +369,7 @@ ATTR
         precision => 'double',
         constant  => { PI => 3.14159, N => -2 },
         size      => [ 'n', 3 ],
-        retval    => ['out'],
+        returns   => ['out'],
         check     => 1
         },
         'options written as in Perl';

@@ -26,7 +26,7 @@ bound), the grid (2-dimensional because `thread_index()` gives two values, the s
 one, otherwise perl, with the same results) all have defaults. Options go in
 a hash after the types, if any:
 
-    sub histogram :GPU(int, int, { retval => [] }) ($labels, $counts) { ... }
+    sub histogram :GPU(int, int, { returns => [] }) ($labels, $counts) { ... }
 
 Options known only at run time apply to all the `:GPU` subs of a package,
 and device arrays keep data on the GPU between calls:
@@ -89,12 +89,12 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
         as in `run([], $in)`. Give `size` when the grid is not the shape of
         the first input, e.g. a kernel whose first input is a lookup table.
 
-    - `retval`: array arguments returned by `run` (default: every array
-    the kernel writes, in declaration order; `retval => []` returns
-    nothing). On the GPU, each nested array or ndarray in `retval` is copied
-    back after the run. When every `retval` is a device array, `run` returns
+    - `returns`: array arguments returned by `run` (default: every array
+    the kernel writes, in declaration order; `returns => []` returns
+    nothing). On the GPU, each nested array or ndarray in `returns` is copied
+    back after the run. When every array in `returns` is a device array, `run` returns
     without waiting for the kernel, and a kernel error surfaces at the next
-    `get` or reduction instead (with `retval => []`, `run` waits).
+    `get` or reduction instead (with `returns => []`, `run` waits).
     - `constant`: `{ NAME => number, ... }`, constants of the kernel
     in addition to those of the sub's package (`use constant NAME =` ...>),
     which a kernel sub sees as barewords; `constant` takes precedence. Each
@@ -123,7 +123,7 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     - `perl_jobs`: number of processes for the perl engine, or `auto` for
     one per CPU (default 1). The rows of the grid (the first value of
     `thread_index()`) are dealt out to forked processes, which send back their
-    rows of the `retval` arrays; results are the same as with one process. Only
+    rows of the arrays in `returns`; results are the same as with one process. Only
     kernels whose stores all use that value, unchanged, as the first index are
     split; others run in one process.
     - `check`: true to check every array index (default off). An index out
@@ -135,7 +135,7 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
 
         Indices are truncated toward zero first, as in C. When several accesses are
         out of range, the GPU reports one of them (threads run in parallel) and perl
-        the first in its order; the contents of the `retval` arrays are then
+        the first in its order; the contents of the arrays in `returns` are then
         unspecified. Checking slows kernels down (about 3 times for a stencil on the
         GPU, 4 times on the perl engine) and costs nothing when off.
 
@@ -151,8 +151,8 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     named values in any order. With names, an array the kernel never reads (and
     that is not the `size`) may be left out: it starts empty. Array
     arguments are array references; an empty array reference takes the shape of
-    the grid and is filled with zeros. Returns the `retval` arrays
-    (the first one in scalar context). The caller's `retval` arrays are also updated
+    the grid and is filled with zeros. Returns the arrays in `returns`
+    (the first one in scalar context). The caller's arrays in `returns` are also updated
     in place.
 
     When calling `run` repeatedly, passing the same output array every time is
@@ -165,7 +165,7 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     `$ndarray->at($j, $i)`. The GPU engine copies ndarrays without any
     per-element conversion, which makes it many times faster than nested arrays
     (see ["PERFORMANCE"](#performance)); an input ndarray of another type is converted. A
-    `retval` ndarray is reshaped and filled in place, fastest when it has the
+    returned ndarray is reshaped and filled in place, fastest when it has the
     type of its argument (`long`, `float` or `double` for `int`, `float` or
     `double`); one of another type receives the values converted to its own
     type. An empty one takes the shape of the grid. The perl engine
@@ -186,7 +186,7 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     `precision => 'double'`), like the default type of a kernel sub's arrays.
 
     Runs use it in place: nothing is copied, a kernel that writes it changes it
-    (whether or not it is a `retval`), and `run` returns it for a `retval`
+    (whether or not it is in `returns`), and `run` returns it when it is in `returns`
     without copying the result back. On the GPU, `run` then returns before the
     kernel finishes, and errors surface at the next `$array->get`. Copy the
     contents back with `$array->get`. This removes the transfers from
@@ -242,7 +242,7 @@ For `:GPU` subs, called as `PerCUDA::name(...)` or imported, like
 - `use PerCUDA { %args }`
 
     Options of `new` (but the per-kernel `source`, `argument`,
-    `size` and `retval`) for every `:GPU` sub of the calling package, decided
+    `size` and `returns`) for every `:GPU` sub of the calling package, decided
     at run time, e.g. `configure(engine => $engine, precision => 'double')`
     (the global settings of Taichi's `ti.init`, per package). The engine is
     chosen once, here. The options in a sub's attribute take precedence (except
@@ -306,7 +306,7 @@ them, in order, in the `:GPU` attribute:
 ## Options
 
 The `:GPU` attribute takes the types, if any, then a hash of the options of
-`new`, written as for `new` (`argument`, `size`, `retval`,
+`new`, written as for `new` (`argument`, `size`, `returns`,
 `constant`, `precision`, `mode`, `engine`, `check`, `perl_jobs`,
 `cache_dir` and `device`), like a function signature followed by keyword
 arguments in Numba's `@cuda.jit`:
@@ -339,7 +339,7 @@ arrays to match:
     my ($u, $v) = map { array(dims => [ $n, $n ]) } 1 .. 2;
     for (1 .. 100) { step($u, $v, 0.24); ($u, $v) = ($v, $u) }
 
-Anything not given (`size`, `retval`) is inferred as for `new`.
+Anything not given (`size`, `returns`) is inferred as for `new`.
 Constants are best written with `use constant`, as barewords: `$NAME`
 from `constant => { ... }` would need `our $NAME` to compile under
 `strict`.
@@ -440,7 +440,7 @@ precisions.
 - Bit operations work on 32-bit signed integers.
 - Values are converted like C casts: `int` data is truncated and `float`
 data is rounded to single precision, including the arrays passed to `run`.
-- Empty arrays are filled with zeros, and only `retval` arrays (by
+- Empty arrays are filled with zeros, and only the arrays in `returns` (by
 default, every array the kernel writes) are changed for the caller (other
 arrays are copied first when needed).
 - `exp`, `log`, `sin`, `cos`, `atan2` and `pow`: with

@@ -19,7 +19,7 @@ for my $engine (both_engines()) {
     my $r = PerCUDA->new(
         engine   => $engine,
         argument => [ in => 'f', out => 'f' ],
-        retval   => ['out'],
+        returns  => ['out'],
         source   => 'my ($x, $y) = thread_index(); $out->[$x][$y] = $in->[$x][$y] * 2;',
     );
     is scalar $r->run([ [ 1, 2, 3 ], [ 4, 5, 6 ] ], []), [ [ 2, 4, 6 ], [ 8, 10, 12 ] ], "$engine: nested arrays work";

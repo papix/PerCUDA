@@ -139,6 +139,7 @@ sub new ($class, %args) {
     # The grid has as many dimensions as my (...) = thread_index() declares.
     Carp::croak("PerCUDA: dim is not an option; the kernel's my (\$x, ...) = thread_index() gives the dimensions")
         if exists $args{dim};
+    Carp::croak("PerCUDA: retval is now called returns") if exists $args{retval};
     my $declared = index_dim($ast);
     my $dim      = $declared // (ref $size ? scalar @$size : 1);
     Carp::croak("PerCUDA: size gives " . @$size . " dimension(s) but " . declared_function($ast) . " gives $dim")
@@ -148,11 +149,12 @@ sub new ($class, %args) {
     my %arg = map { $_->{name} => $_ } @{ $an->args };
 
     # By default run returns every array the kernel writes.
-    my $retval = $args{retval} // [ map { $_->{name} } grep { $_->{kind} eq 'array' && $_->{written} } @{ $an->args } ];
-    $retval = [$retval] unless ref $retval;
-    for my $name (@$retval) {
-        Carp::croak("PerCUDA: retval '$name' is not an argument") unless $arg{$name};
-        Carp::croak("PerCUDA: retval '$name' must be an array used in the kernel")
+    my $returns = $args{returns}
+        // [ map { $_->{name} } grep { $_->{kind} eq 'array' && $_->{written} } @{ $an->args } ];
+    $returns = [$returns] unless ref $returns;
+    for my $name (@$returns) {
+        Carp::croak("PerCUDA: '$name' in returns is not an argument") unless $arg{$name};
+        Carp::croak("PerCUDA: '$name' in returns must be an array used in the kernel")
             unless $arg{$name}{kind} eq 'array';
     }
 
@@ -196,7 +198,7 @@ sub new ($class, %args) {
         candidates => $candidates,
         precision  => $precision,
     }, $class;
-    my %common = (analyzer => $an, size => $size, candidates => $candidates, retval => $retval, check => $check);
+    my %common = (analyzer => $an, size => $size, candidates => $candidates, returns => $returns, check => $check);
 
     my $context;
     if (!defined $engine || $engine eq 'gpu') {
@@ -435,7 +437,7 @@ C<$a>), the result (the written C<$c>) and the engine (the GPU when there is
 one, otherwise perl, with the same results) all have defaults. Options go in
 a hash after the types, if any:
 
-    sub histogram :GPU(int, int, { retval => [] }) ($labels, $counts) { ... }
+    sub histogram :GPU(int, int, { returns => [] }) ($labels, $counts) { ... }
 
 Options known only at run time apply to all the C<:GPU> subs of a package,
 and device arrays keep data on the GPU between calls:
@@ -505,12 +507,12 @@ When all of them are empty, C<run> dies instead of running no thread. So the out
 as in C<< run([], $in) >>. Give C<size> when the grid is not the shape of
 the first input, e.g. a kernel whose first input is a lookup table.
 
-=item C<retval>: array arguments returned by C<run> (default: every array
-the kernel writes, in declaration order; C<< retval => [] >> returns
-nothing). On the GPU, each nested array or ndarray in C<retval> is copied
-back after the run. When every C<retval> is a device array, C<run> returns
+=item C<returns>: array arguments returned by C<run> (default: every array
+the kernel writes, in declaration order; C<< returns => [] >> returns
+nothing). On the GPU, each nested array or ndarray in C<returns> is copied
+back after the run. When every array in C<returns> is a device array, C<run> returns
 without waiting for the kernel, and a kernel error surfaces at the next
-C<get> or reduction instead (with C<< retval => [] >>, C<run> waits).
+C<get> or reduction instead (with C<< returns => [] >>, C<run> waits).
 
 =item C<constant>: C<< { NAME => number, ... } >>, constants of the kernel
 in addition to those of the sub's package (C<use constant NAME => ...>),
@@ -551,7 +553,7 @@ and 2.7 times in double precision for a kernel made of little else).
 =item C<perl_jobs>: number of processes for the perl engine, or C<auto> for
 one per CPU (default 1). The rows of the grid (the first value of
 C<thread_index()>) are dealt out to forked processes, which send back their
-rows of the C<retval> arrays; results are the same as with one process. Only
+rows of the arrays in C<returns>; results are the same as with one process. Only
 kernels whose stores all use that value, unchanged, as the first index are
 split; others run in one process.
 
@@ -564,7 +566,7 @@ C<thread_index()> gives it), e.g.
 
 Indices are truncated toward zero first, as in C. When several accesses are
 out of range, the GPU reports one of them (threads run in parallel) and perl
-the first in its order; the contents of the C<retval> arrays are then
+the first in its order; the contents of the arrays in C<returns> are then
 unspecified. Checking slows kernels down (about 3 times for a stencil on the
 GPU, 4 times on the perl engine) and costs nothing when off.
 
@@ -585,8 +587,8 @@ Runs the kernel with one value per declared argument, in order, or with
 named values in any order. With names, an array the kernel never reads (and
 that is not the C<size>) may be left out: it starts empty. Array
 arguments are array references; an empty array reference takes the shape of
-the grid and is filled with zeros. Returns the C<retval> arrays
-(the first one in scalar context). The caller's C<retval> arrays are also updated
+the grid and is filled with zeros. Returns the arrays in C<returns>
+(the first one in scalar context). The caller's arrays in C<returns> are also updated
 in place.
 
 When calling C<run> repeatedly, passing the same output array every time is
@@ -599,7 +601,7 @@ reverse of C<< $ndarray->dims >>: C<< $a->[$i][$j] >> in a kernel is
 C<< $ndarray->at($j, $i) >>. The GPU engine copies ndarrays without any
 per-element conversion, which makes it many times faster than nested arrays
 (see L</PERFORMANCE>); an input ndarray of another type is converted. A
-C<retval> ndarray is reshaped and filled in place, fastest when it has the
+returned ndarray is reshaped and filled in place, fastest when it has the
 type of its argument (C<long>, C<float> or C<double> for C<int>, C<float> or
 C<double>); one of another type receives the values converted to its own
 type. An empty one takes the shape of the grid. The perl engine
@@ -621,7 +623,7 @@ C<double> keeps its type, and anything else is a C<float> (a C<double> with
 C<< precision => 'double' >>), like the default type of a kernel sub's arrays.
 
 Runs use it in place: nothing is copied, a kernel that writes it changes it
-(whether or not it is a C<retval>), and C<run> returns it for a C<retval>
+(whether or not it is in C<returns>), and C<run> returns it when it is in C<returns>
 without copying the result back. On the GPU, C<run> then returns before the
 kernel finishes, and errors surface at the next C<< $array->get >>. Copy the
 contents back with C<< $array->get >>. This removes the transfers from
@@ -682,7 +684,7 @@ L<Getopt::Long>'s C<Configure> (C<use PerCUDA qw(configure array runner)>):
 =item C<< use PerCUDA { %args } >>
 
 Options of C<new> (but the per-kernel C<source>, C<argument>,
-C<size> and C<retval>) for every C<:GPU> sub of the calling package, decided
+C<size> and C<returns>) for every C<:GPU> sub of the calling package, decided
 at run time, e.g. C<< configure(engine => $engine, precision => 'double') >>
 (the global settings of Taichi's C<ti.init>, per package). The engine is
 chosen once, here. The options in a sub's attribute take precedence (except
@@ -748,7 +750,7 @@ them, in order, in the C<:GPU> attribute:
 =head2 Options
 
 The C<:GPU> attribute takes the types, if any, then a hash of the options of
-C<new>, written as for C<new> (C<argument>, C<size>, C<retval>,
+C<new>, written as for C<new> (C<argument>, C<size>, C<returns>,
 C<constant>, C<precision>, C<mode>, C<engine>, C<check>, C<perl_jobs>,
 C<cache_dir> and C<device>), like a function signature followed by keyword
 arguments in Numba's C<@cuda.jit>:
@@ -781,7 +783,7 @@ arrays to match:
     my ($u, $v) = map { array(dims => [ $n, $n ]) } 1 .. 2;
     for (1 .. 100) { step($u, $v, 0.24); ($u, $v) = ($v, $u) }
 
-Anything not given (C<size>, C<retval>) is inferred as for C<new>.
+Anything not given (C<size>, C<returns>) is inferred as for C<new>.
 Constants are best written with C<use constant>, as barewords: C<$NAME>
 from C<< constant => { ... } >> would need C<our $NAME> to compile under
 C<strict>.
@@ -899,7 +901,7 @@ precisions.
 =item * Values are converted like C casts: C<int> data is truncated and C<float>
 data is rounded to single precision, including the arrays passed to C<run>.
 
-=item * Empty arrays are filled with zeros, and only C<retval> arrays (by
+=item * Empty arrays are filled with zeros, and only the arrays in C<returns> (by
 default, every array the kernel writes) are changed for the caller (other
 arrays are copied first when needed).
 

@@ -34,7 +34,7 @@ for my $precision (qw(single double)) {
             precision => $precision,
             argument  => [ out => 'i', max => 'i' ],
             size      => 'out',
-            retval    => ['out'],
+            returns   => ['out'],
             source    => $KERNEL,
         );
         $result{$precision}{$engine} = $r->run([ map { [ (0) x $W ] } 1 .. $W ], 256);
