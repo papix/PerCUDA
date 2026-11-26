@@ -8,7 +8,9 @@ our @CARP_NOT = qw(PerCUDA PerCUDA::Kernel PerCUDA::Context);
 # Parses the Perl subset accepted in PerCUDA kernels into an AST.
 #
 # Statements: { t => 'my' | 'expr' | 'if' | 'for' | 'foreach' | 'while' | 'block'
-#                    | 'last' | 'next' | 'return', ... }
+#                    | 'last' | 'next' | 'return' | 'index', ... }
+# 'index' is my ($x, $y) = thread_index(); (what => 'thread') or
+# my ($nx, $ny) = grid_size(); (what => 'grid'), with names => [ 'x', 'y' ].
 # Expressions: { t => 'num' | 'var' | 'elem' | 'bin' | 'un' | 'assign' | 'pre' | 'post'
 #                     | 'cond' | 'call', ... }
 
@@ -22,6 +24,10 @@ my $PUNCT_RE = join '|', map { quotemeta } @PUNCT;
 my %KEYWORD = map { $_ => 1 } qw(
     my if elsif else unless for foreach while until last next return and or not
 );
+
+# The functions that give the thread index and the grid size; only
+# my (...) = NAME(); can call them.
+our %INDEX = (thread_index => 'thread', grid_size => 'grid');
 
 # Functions and their number of arguments. floor and ceil are POSIX's.
 our %BUILTIN = (
@@ -190,10 +196,41 @@ sub _simple_statement ($self) {
 
 sub _my ($self) {
     my $tok = $self->_expect(kw => 'my');
+    if ($self->_accept(op => '(')) {    # my ($x, $y) = thread_index();
+        my @names;
+        do {
+            $self->_error('only scalar variables can be declared with my') unless $self->_is('var');
+            push @names, $self->_next->{value};
+        } while ($self->_accept(op => ','));
+        $self->_expect(op => ')');
+        $self->_error('my (...) is only supported as my (...) = thread_index() or my (...) = grid_size()')
+            unless $self->_accept(op => '=') && $self->_is_index_call;
+        return $self->_index_call(\@names, $tok->{line});
+    }
     $self->_error('only scalar variables can be declared with my') unless $self->_is('var');
     my $name = $self->_next->{value};
+    if ($self->_is(op => '=') && $self->_is_index_call(1)) {    # my $i = thread_index();
+        $self->_next;
+        return $self->_index_call([$name], $tok->{line});
+    }
     my $init = $self->_accept(op => '=') ? $self->_assign_expr : undef;
     return { t => 'my', name => $name, init => $init, line => $tok->{line} };
+}
+
+# thread_index() or grid_size() (parentheses optional), the whole right-hand side.
+sub _is_index_call ($self, $n = 0) {
+    return 0 unless $self->_is('ident', undef, $n) && $INDEX{ $self->_peek($n)->{value} };
+    my $after = $self->_is(op => '(', $n + 1) && $self->_is(op => ')', $n + 2) ? $n + 3 : $n + 1;
+    return $self->_is(op => ';', $after) || $self->_is(op => '}', $after) || $self->_is('eof', $after);
+}
+
+sub _index_call ($self, $names, $line) {
+    my $func = $self->_next->{value};
+    $self->_expect(op => ')') if $self->_accept(op => '(');
+    Carp::croak("PerCUDA: $func() gives at most 3 values, not " . @$names . " at kernel line $line") if @$names > 3;
+    my %seen;
+    $seen{$_}++ && Carp::croak("PerCUDA: \$$_ is declared twice at kernel line $line") for @$names;
+    return { t => 'index', what => $INDEX{$func}, names => $names, line => $line };
 }
 
 sub _for ($self) {
@@ -401,6 +438,9 @@ sub _primary ($self) {
     }
     if ($tok->{type} eq 'ident') {
         $self->_next;
+        Carp::croak("PerCUDA: $tok->{value}() can only be used as my (\$x, ...) = $tok->{value}();"
+                . " at kernel line $tok->{line}")
+            if $INDEX{ $tok->{value} };
 
         # a bareword that is not a function: a constant (constant => { NAME
         # => ... } or, for a kernel sub, use constant NAME => ... in its package)

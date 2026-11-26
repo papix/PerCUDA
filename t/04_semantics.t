@@ -12,6 +12,7 @@ my @cases = (
         name     => 'int arithmetic, division, modulus with negatives',
         argument => [ in => 'i', out => 'f' ],
         source   => <<'K',
+my $x = thread_index();
 my $v = $in->[$x];
 my $r = 0;
 $r += $v % 7;
@@ -26,6 +27,7 @@ K
         name     => 'bit operations and shifts',
         argument => [ in => 'i', out => 'i' ],
         source   => <<'K',
+my $x = thread_index();
 my $v = $in->[$x] + 20;
 $out->[$x] = (($v & 5) | ($v ^ 3)) + ($v << 2) + ($v >> 1) + (~$v & 255);
 K
@@ -34,6 +36,7 @@ K
         name     => 'control flow: last, next, while, foreach, ternary, return',
         argument => [ in => 'i', out => 'i' ],
         source   => <<'K',
+my $x = thread_index();
 my $v = $in->[$x];
 my $acc = 0;
 for (my $i = 0; $i < 50; $i++) {
@@ -55,6 +58,7 @@ K
         name     => 'logical operators return the deciding operand',
         argument => [ in => 'i', out => 'i' ],
         source   => <<'K',
+my $x = thread_index();
 my $v = $in->[$x] % 3;
 my $a = $v || 7;
 my $b = $v && 9;
@@ -68,6 +72,7 @@ K
         name     => 'power, sqrt, abs',
         argument => [ in => 'i', out => 'f' ],
         source   => <<'K',
+my $x = thread_index();
 my $v = $in->[$x] - 10;
 $out->[$x] = $v ** 3 + 2 ** 10 + abs($v) + sqrt abs $v + 1 + (0.5 * $v) ** 2 + 2 ** -2;
 K
@@ -76,6 +81,7 @@ K
         name     => 'double precision',
         argument => [ in => 'd', out => 'd' ],
         source   => <<'K',
+my $x = thread_index();
 my $s = 0;
 for my $i (1 .. 100) { $s += $in->[$x] / $i; }
 $out->[$x] = $s;
@@ -89,7 +95,6 @@ for my $case (@cases) {
         my %result;
         for my $engine (qw(perl gpu)) {
             my $r = PerCUDA->new(
-                dim      => 1,
                 engine   => $engine,
                 argument => $case->{argument},
                 retval   => ['out'],
@@ -119,11 +124,11 @@ subtest '3D grid and scalar arguments' => sub {
     ];
     for my $engine (qw(perl gpu)) {
         my $r = PerCUDA->new(
-            dim      => 3,
             engine   => $engine,
             argument => [ c => 'i', out => 'f', scale => 'f' ],
             retval   => ['out'],
-            source   => '$out->[$x][$y][$z] = $c->[$x][$y][$z] * $scale + $size_x * $size_y * $size_z;',
+            source   => 'my ($x, $y, $z) = thread_index(); my ($size_x, $size_y, $size_z) = grid_size();'
+                . ' $out->[$x][$y][$z] = $c->[$x][$y][$z] * $scale + $size_x * $size_y * $size_z;',
         );
         $result{$engine} = $r->run($cube, [], 0.5);
     }

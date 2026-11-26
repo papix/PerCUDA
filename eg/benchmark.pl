@@ -12,6 +12,7 @@ $n      //= 1024;
 
 # n is an int (a loop bound); the arrays are float.
 sub matmul : GPU ($a, $b, $c, $n) {
+    my ($x, $y) = thread_index();
     my $sum = 0.0;
     for (my $k = 0; $k < $n; $k++) {
         $sum += $a->[$x][$k] * $b->[$k][$y];

@@ -13,7 +13,7 @@ my %args = (
     cache_dir => "$dir",
     argument  => [ in => 'f', out => 'f' ],
     retval    => ['out'],
-    source    => '$out->[$x] = $in->[$x] * 2;',
+    source    => 'my $x = thread_index(); $out->[$x] = $in->[$x] * 2;',
 );
 
 sub cache_files () { glob "$dir/*.bin" }

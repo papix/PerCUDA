@@ -7,6 +7,7 @@ use List::Util    ();
 use File::Spec    ();
 use PerCUDA::Data qw(type_code);
 use PerCUDA::Analyzer;
+use PerCUDA::Parser ();
 
 our @CARP_NOT = qw(PerCUDA PerCUDA::Engine attributes);
 
@@ -15,14 +16,16 @@ our @CARP_NOT = qw(PerCUDA PerCUDA::Engine attributes);
 # from its source file and replaces the sub with one that runs it as a
 # kernel; the runner is built on the first call.
 
-# The thread index and grid size, shared with every package that imports
-# PerCUDA, so that kernel subs compile under strict. Only kernels see their
-# values (the sub itself never runs as Perl).
-our ($x, $y, $z, $size_x, $size_y, $size_z);
-my %THREAD_VAR = (x => \$x, y => \$y, z => \$z, size_x => \$size_x, size_y => \$size_y, size_z => \$size_z);
+# thread_index() and grid_size(), imported into every package that uses
+# PerCUDA so that kernel subs compile under strict. Only kernels give them a
+# value (a kernel sub itself never runs as Perl).
+my %INDEX_FUNCTION = map {
+    my $func = $_;
+    $func => sub (@) { Carp::croak("PerCUDA: $func() can only be called in a kernel") }
+} sort keys %PerCUDA::Parser::INDEX;
 
 my %OPTION =
-    map { $_ => 1 } qw(argument dim size retval constant precision mode engine check perl_jobs cache_dir device);
+    map { $_ => 1 } qw(argument size retval constant precision mode engine check perl_jobs cache_dir device);
 my %KERNEL;    # refaddr of a :GPU sub => sub returning its runner
 my %SOURCE;    # refaddr of a sub => [ parameter names, body, package ]
 my %ATTRIBUTE;    # refaddr of a :GPU sub => arguments of PerCUDA->new from its attribute
@@ -30,7 +33,12 @@ my %CONFIG;    # package => PerCUDA::Context from PerCUDA::configure
 my @KEEP;    # the :GPU subs, alive for the life of the process (the hashes above use their addresses)
 
 sub import_into ($class, $package) {
-    *{ qualify_to_ref($_, $package) } = $THREAD_VAR{$_} for sort keys %THREAD_VAR;
+
+    # A sub of the package's own by that name stays (kernels never call it).
+    for my $func (sort keys %INDEX_FUNCTION) {
+        my $glob = qualify_to_ref($func, $package);
+        *$glob = $INDEX_FUNCTION{$func} unless *$glob{CODE};
+    }
     my $next = $package->can('MODIFY_CODE_ATTRIBUTES');    # another attribute handler, if any
     no warnings 'redefine';
     *{ qualify_to_ref("MODIFY_CODE_ATTRIBUTES", $package) } = sub ($pkg, $cv, @attrs) {
@@ -234,7 +242,7 @@ sub configure ($class, $package, @options) {
     }
     for my $key (sort keys %options) {
         Carp::croak("PerCUDA: configure cannot set '$key' (it belongs to each kernel)")
-            if $key =~ /\A(?:source|argument|size|retval|dim)\z/;
+            if $key =~ /\A(?:source|argument|size|retval)\z/;
     }
     return $CONFIG{$package} = PerCUDA::Context->new(%options);
 }
@@ -273,7 +281,8 @@ PerCUDA::Kernel - Kernels written as subs with the :GPU attribute
     use PerCUDA;
 
     sub add :GPU(float, float, float) ($a, $b, $out) {
-        $out->[$x][$y] = $a->[$x][$y] + $b->[$x][$y];
+        my ($i, $j) = thread_index();
+        $out->[$i][$j] = $a->[$i][$j] + $b->[$i][$j];
     }
 
     my $sum = add($p, $q, []);

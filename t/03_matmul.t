@@ -6,6 +6,7 @@ use PerCUDA;
 
 # The example of Fig. 2 in the paper, with N passed explicitly.
 my $KERNEL = <<'K';
+my ($x, $y) = thread_index();
 my $tmp = 0;
 for (my $i = 0; $i < $N; $i++) {
     $tmp = $tmp
@@ -17,7 +18,6 @@ K
 
 sub runner ($engine) {
     return PerCUDA->new(
-        dim      => 2,
         size     => 'array1',
         engine   => $engine,
         argument => [ array1 => 'f', array2 => 'f', array3 => 'f', N => 'i' ],

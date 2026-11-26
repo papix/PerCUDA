@@ -209,8 +209,9 @@ sub run ($self, @values) {
     if ($err) {
         my ($bad, $id, $line, $axis, $index, @thread) = @{ $err->read_array(type => 'i32', dims => [8]) };
         if ($bad) {
-            my $arg = $self->{args}[$id];
-            PerCUDA::Engine::out_of_range($arg->{name}, $line, [ @thread[ 0 .. $dim - 1 ] ],
+            my $arg   = $self->{args}[$id];
+            my $names = $self->{analyzer}->thread_names;
+            PerCUDA::Engine::out_of_range($arg->{name}, $line, [ map { $names->[$_] => $thread[$_] } 0 .. $dim - 1 ],
                 $axis, $index, $layout->{arrays}{$id}{dims}[$axis]);
         }
     }

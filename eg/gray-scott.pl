@@ -23,12 +23,16 @@ $kill  //= 0.062;
 my ($du, $dv, $dt) = (1.0, 0.5, 1.0);
 
 sub init : GPU ($u, $v, $seed) {
+    my ($x,      $y)      = thread_index();
+    my ($size_x, $size_y) = grid_size();
     my $inside = abs($x - $size_x / 2) < $size_x / 10 && abs($y - $size_y / 2) < $size_y / 10;
     $u->[$x][$y] = $inside ? 0.5                                : 1.0;
     $v->[$x][$y] = $inside ? 0.25 + 0.1 * random($seed, $x, $y) : 0.0;
 }
 
 sub step : GPU ($u, $v, $u2, $v2, $du, $dv, $feed, $kill, $dt) {
+    my ($x, $y)           = thread_index();
+    my ($size_x, $size_y) = grid_size();
     my $xm = ($x + $size_x - 1) % $size_x;
     my $xp = ($x + 1) % $size_x;
     my $ym = ($y + $size_y - 1) % $size_y;

@@ -18,6 +18,7 @@ $seed //= 1;
 my ($rate, $volatility) = (0.02, 0.30);
 
 sub inputs : GPU ($s, $k, $t, $seed) {
+    my $x = thread_index();
     $s->[$x] = 5.0 + 25.0 * random($seed, $x, 0);
     $k->[$x] = 1.0 + 99.0 * random($seed, $x, 1);
     $t->[$x] = 0.25 + 9.75 * random($seed, $x, 2);
@@ -25,6 +26,7 @@ sub inputs : GPU ($s, $k, $t, $seed) {
 
 # CND(d) is written out twice: kernels have no subroutines.
 sub price : GPU ($s, $k, $t, $call, $put, $parity, $r, $v) {
+    my $x      = thread_index();
     my $sqrt_t = sqrt($t->[$x]);
     my $d1     = (log($s->[$x] / $k->[$x]) + ($r + 0.5 * $v * $v) * $t->[$x]) / ($v * $sqrt_t);
     my $d2     = $d1 - $v * $sqrt_t;

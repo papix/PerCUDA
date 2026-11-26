@@ -12,18 +12,22 @@ use PerCUDA::Analyzer;
 # Kernels as subs with :GPU; both engines run the same body.
 
 sub add : GPU(float, float, float) ($a, $b, $out) {
+    my ($x, $y) = thread_index();
     $out->[$x][$y] = $a->[$x][$y] + $b->[$x][$y];    # {braces} in a comment
 }
 
 sub add_perl : GPU(float, float, float, { engine => 'perl' }) ($a, $b, $out) {
+    my ($x, $y) = thread_index();
     $out->[$x][$y] = $a->[$x][$y] + $b->[$x][$y];
 }
 
 sub squares : GPU({ size => 'n' }) ($out, $n) {
+    my $x = thread_index();
     $out->[$x] = $x * $x;
 }
 
 sub scaled : GPU({ precision => 'double' }) ($in, $out, $s) {
+    my $x = thread_index();
     if ($in->[$x] < 0) {
         $out->[$x] = 0.0;
         return;
@@ -50,12 +54,14 @@ like dies {
     'runner of an ordinary sub';
 
 sub checked : GPU(float, { check => 1 }) ($in) {
+    my $x = thread_index();
     $in->[ $x + 1 ] = 0;
 }
 my $line = __LINE__ - 2;
 like dies { checked([ 1, 2 ]) }, qr/at kernel line $line:/, 'kernel lines are lines of the file';
 
 sub plain_add ($a, $b, $out) {
+    my ($x, $y) = thread_index();
     $out->[$x][$y] = $a->[$x][$y] + $b->[$x][$y];
 }
 
@@ -69,7 +75,7 @@ subtest 'source => a code reference' => sub {
         my $scale = PerCUDA->new(
             engine   => $engine,
             argument => [ in => 'f', out => 'f', s => 'f' ],
-            source   => sub ($in, $out, $s) { $out->[$x] = $in->[$x] * $s },
+            source   => sub ($in, $out, $s) { my $x = thread_index(); $out->[$x] = $in->[$x] * $s },
         );
         is scalar $scale->run([ 1, 2, 3 ], [], 0.5), [ 0.5, 1, 1.5 ], "$engine: an anonymous sub on one line";
 
@@ -77,6 +83,7 @@ subtest 'source => a code reference' => sub {
             engine   => $engine,
             argument => [ in => 'f', out => 'f' ],
             source   => sub ($in, $out) {
+                my $x = thread_index();
                 my $v = $in->[$x];
                 $v = 0.0 if $v < 0;
                 $out->[$x] = $v;
@@ -96,11 +103,13 @@ subtest 'source => a code reference' => sub {
 };
 
 sub third : GPU({ precision => 'double' }) ($a) {
+    my $x = thread_index();
     $a->[$x] = 1.0 / 3.0;
 }
 
 subtest 'review fixes' => sub {
-    my ($one, $two) = (sub ($a, $b) { $b->[$x] = 1 }, sub ($a, $b) { $b->[$x] = 2 });
+    my ($one, $two) =
+        (sub ($a, $b) { my $x = thread_index(); $b->[$x] = 1 }, sub ($a, $b) { my $x = thread_index(); $b->[$x] = 2 });
     like dies { PerCUDA->new(source => $two, engine => 'perl') }, qr/has 2 anonymous subs; put each kernel sub/,
         'two anonymous subs on one line are refused, not confused';
 
@@ -108,14 +117,30 @@ subtest 'review fixes' => sub {
     is { $third->arguments }, { a => 'double' }, 'the attribute of a :GPU sub wins over the context';
     is scalar $third->run([0]), [ 1 / 3 ], 'and computes in double precision';
 
-    my $inf = PerCUDA->new(engine => 'perl', source => sub ($inf, $out) { $out->[$x] = $inf + 1 }, size => [2]);
+    my $inf = PerCUDA->new(
+        engine => 'perl',
+        source => sub ($inf, $out) { my $x = thread_index(); $out->[$x] = $inf + 1 },
+        size   => [2]
+    );
     is scalar $inf->run(inf => 2, out => []), [ 3, 3 ], 'a named call whose first name looks like a number';
     is scalar $inf->run(2, []), [ 3, 3 ], 'and positional still works';
 
     my $merged = PerCUDA->new(source => \&with_constants, engine => 'perl', constant => { B => 3 });
     is scalar $merged->run([0]), [5], 'constants of new add to those of the attribute';
-    like dies { PerCUDA->new(argument => [ a => 'f' ], constant => { x => 1 }, source => '$a->[$x] = 1;') },
-        qr/constant name 'x' is reserved/, 'a constant cannot hide a thread index';
+    my $named_x = PerCUDA->new(
+        engine   => 'perl',
+        argument => [ a => 'f' ],
+        constant => { x => 5 },
+        source   => 'my $i = thread_index(); $a->[$i] = $x + x;'
+    );
+    is scalar $named_x->run([ 0, 0 ]), [ 10, 10 ], 'a constant may be called x: it is not a reserved name';
+    like dies {
+        PerCUDA->new(
+            argument => [ a => 'f' ],
+            constant => { x => 5 },
+            source   => 'my $x = thread_index(); $a->[$x] = 1;'
+        )
+    }, qr/constant \$x cannot be declared/, 'but it cannot also be declared as the thread index';
     my $types = PerCUDA::Analyzer::infer_types(
         PerCUDA::Parser->new(source => 'for (my $k = 0; $k < $n * 0.5; $k++) { $a->[$x] += 1; }')->parse,
         ['n'], 'f');
@@ -125,6 +150,7 @@ subtest 'review fixes' => sub {
 our ($A, $B);    # constants given in options are $NAMEs
 
 sub with_constants : GPU(float, { constant => { A => 2 } }) ($a) {
+    my $x = thread_index();
     $a->[$x] = $A + $B;
 }
 
@@ -134,10 +160,12 @@ sub with_constants : GPU(float, { constant => { A => 2 } }) ($a) {
     use PerCUDA;
 
     sub twice : GPU ($out, $in) {
+        my $x = thread_index();
         $out->[$x] = $in->[$x] * 2;
     }
 
     sub keep_float : GPU({ precision => 'single' }) ($out) {
+        my $x = thread_index();
         $out->[$x] = 1.0 / 3.0;
     }
     sub setup (@options) { return PerCUDA->configure(@options) }
@@ -178,7 +206,10 @@ subtest 'configure' => sub {
 
     my ($names, $body) = PerCUDA::Kernel::extract_sub("sub last (\$a) {\n    \$a->[\$#{\$a}] = 1;\n}\n", 'last', 2);
     like $body, qr/\$#\{\$a\}\] = 1;/, '$#{...} is not a comment';
-    my $grid = PerCUDA->new(engine => 'perl', source => sub ($t, $in, $out) { $out->[$x] = $in->[$x] + $t->[0][0] });
+    my $grid = PerCUDA->new(
+        engine => 'perl',
+        source => sub ($t, $in, $out) { my $x = thread_index(); $out->[$x] = $in->[$x] + $t->[0][0] }
+    );
     is scalar $grid->run([ [] ], [ 1, 2 ], []), [ 1, 2 ], 'an array with an empty row is not the grid';
 };
 
@@ -188,6 +219,7 @@ subtest 'configure' => sub {
     use PerCUDA qw(configure array runner);
 
     sub inc : GPU ($a) {
+        my $x = thread_index();
         $a->[$x] += 1;
     }
 
@@ -214,7 +246,8 @@ subtest 'functions' => sub {
     ok !T5->can('MODIFY_CODE_ATTRIBUTES'), 'and installs nothing';
 
     local $ENV{PERCUDA_ENGINE} = 'perl';
-    is(PerCUDA->new(argument => [ a => 'f' ], source => '$a->[$x] = 1;')->engine, 'perl', 'PERCUDA_ENGINE');
+    is(PerCUDA->new(argument => [ a => 'f' ], source => 'my $x = thread_index(); $a->[$x] = 1;')->engine,
+        'perl', 'PERCUDA_ENGINE');
     is(PerCUDA->context->engine, 'perl', 'PERCUDA_ENGINE in a context');
 };
 
@@ -223,6 +256,7 @@ my $side_effects = 0;
 sub NOT_A_CONSTANT () { $side_effects++; return 1 }
 
 sub sized : GPU({ size => [SIZE] }) ($out) {    # a constant in the options
+    my $x = thread_index();
     $out->[$x] = $x;
 }
 
@@ -231,6 +265,7 @@ sub commented : GPU (
     $out,    # output
     )
 {
+    my $x = thread_index();
     $out->[$x] = $in->[$x];
 }
 
@@ -238,7 +273,7 @@ subtest 'review fixes (2)' => sub {
     is scalar sized([]), [ 0, 1, 2 ], 'the options see the constants of the package';
     is scalar commented([ 1, 2 ], []), [ 1, 2 ], 'comments in a signature';
     like dies {
-        PerCUDA->new(engine => 'perl', source => sub ($a) { $a->[$x] = NOT_A_CONSTANT })
+        PerCUDA->new(engine => 'perl', source => sub ($a) { my $x = thread_index(); $a->[$x] = NOT_A_CONSTANT })
     }, qr/unknown name 'NOT_A_CONSTANT'/, 'a sub with an empty prototype is not a constant';
     is $side_effects, 0, 'and is not called';
     like dies { PerCUDA::Kernel::parse_attribute('f, { size => [ $m ] }') }, qr/cannot read the :GPU options/,
@@ -250,12 +285,18 @@ subtest 'review fixes (2)' => sub {
 
     our $K;    # a context constant, written $K in a sub
     my $pc     = PerCUDA->context(engine => 'perl', argument => [ n => 'int' ], constant => { K => 7 });
-    my $uses_k = $pc->kernel(source => sub ($out, $n) { $out->[$x] = $K + $n }, argument => [ out => 'double' ]);
+    my $uses_k = $pc->kernel(
+        source   => sub ($out, $n) { my $x = thread_index(); $out->[$x] = $K + $n },
+        argument => [ out => 'double' ]
+    );
     is [ $uses_k->arguments ], [ out => 'double', n => 'int' ], 'context argument types merge with those of the kernel';
     is scalar $uses_k->run([ 0, 0 ], 1), [ 8, 8 ], 'a context constant';
-    my $own_k = $pc->kernel(source => sub ($out, $K) { $out->[$x] = $K });
+    my $own_k = $pc->kernel(source => sub ($out, $K) { my $x = thread_index(); $out->[$x] = $K });
     is scalar $own_k->run([0], 3), [3], 'a parameter $K does not clash with the context constant K';
-    my $outer = PerCUDA->new(engine => 'perl', source => sub ($v, $c) { $c->[$x][$y] = $v->[$x] });
+    my $outer = PerCUDA->new(
+        engine => 'perl',
+        source => sub ($v, $c) { my ($x, $y) = thread_index(); $c->[$x][$y] = $v->[$x] }
+    );
     like dies { $outer->run([ 1, 2, 3 ], []) }, qr/no array with 2 or more dimensions was passed with elements/,
         'a 1-D array is not taken as the grid of a 2-D kernel';
 };
@@ -263,15 +304,22 @@ subtest 'review fixes (2)' => sub {
 use constant N => 4;
 
 sub both_n ($out, $N) {    # N (a constant) and $N (a parameter) are different names, as in Perl
+    my $x = thread_index();
     $out->[$x] = N + $N;
 }
 
 subtest 'constants and variables' => sub {
     is scalar PerCUDA->new(source => \&both_n, engine => 'perl', size => [2])->run([], 10), [ 14, 14 ],
         'use constant N does not replace $N';
-    like dies { PerCUDA->new(argument => [ a => 'f' ], constant => { K => '1e400' }, source => '$a->[$x] = K;') },
-        qr/constant 'K' must be a finite number/, 'an infinite constant';
-    like dies { PerCUDA->new(argument => [ a => 'f' ], source => '$a->[$x] = 1 +;') }, qr/at \Q${\__FILE__}\E line/,
+    like dies {
+        PerCUDA->new(
+            argument => [ a => 'f' ],
+            constant => { K => '1e400' },
+            source   => 'my $x = thread_index(); $a->[$x] = K;'
+        )
+    }, qr/constant 'K' must be a finite number/, 'an infinite constant';
+    like dies { PerCUDA->new(argument => [ a => 'f' ], source => 'my $x = thread_index(); $a->[$x] = 1 +;') },
+        qr/at \Q${\__FILE__}\E line/,
         'kernel errors point at the caller of new';
 };
 
@@ -305,7 +353,8 @@ subtest 'attribute' => sub {
     like dies { PerCUDA::Kernel::parse_attribute('f, { color => 1 }') }, qr/unknown :GPU option/, 'bad option';
     like dies { PerCUDA::Kernel::parse_attribute('f, check => 1') }, qr/one hash after the types/,
         'options not in a hash';
-    like dies { PerCUDA::Kernel::parse_attribute('f, { check => 1 }, { dim => 1 }') }, qr/one hash after the types/,
+    like dies { PerCUDA::Kernel::parse_attribute('f, { check => 1 }, { perl_jobs => 1 }') },
+        qr/one hash after the types/,
         'two hashes';
 
     ($types, $options) = PerCUDA::Kernel::parse_attribute(<<'ATTR');
@@ -350,6 +399,7 @@ subtest 'default types' => sub {
     is $types->('$a->[$x] = $a->[$x] % 2;', qw(a)), { a => 'f' }, 'an array is never int by default';
 
     sub typed : GPU ($out, $in, $k, $seed, $s) {
+        my $x = thread_index();
         $out->[$x] = $in->[ $x % $k ] * $s + random($seed, $x);
     }
     is [ PerCUDA->runner(\&typed)->arguments ],
@@ -359,11 +409,13 @@ subtest 'default types' => sub {
         'argument gives some types, the rest are defaults';
 
     sub typed_double : GPU({ precision => 'double', argument => [ k => 'float' ] }) ($out, $k) {
+        my $x = thread_index();
         $out->[$x] = $k;
     }
     is [ PerCUDA->runner(\&typed_double)->arguments ], [ out => 'double', k => 'float' ],
         'precision double, and argument in the :GPU options';
-    like dies { PerCUDA->new(argument => [ a => undef ], source => '$a->[$x] = 1;') }, qr/unknown type/,
+    like dies { PerCUDA->new(argument => [ a => undef ], source => 'my $x = thread_index(); $a->[$x] = 1;') },
+        qr/unknown type/,
         'a string kernel needs every type';
 
     my $inherited = PerCUDA->new(source => \&typed_double);
@@ -376,20 +428,21 @@ use constant { K => 10, HALF => 0.5 };
 our $OFFSET;    # a constant given in the attribute is a $NAME, so it needs declaring
 
 sub with_options : GPU({ constant => { OFFSET => 100 }, size => [ 'n', 2 ] }) ($out, $n) {
+    my ($x, $y) = thread_index();
     $out->[$x][$y] = $x * K + $y + $OFFSET;
 }
 is scalar with_options([], 2), [ [ 100, 101 ], [ 110, 111 ] ], 'use constant, constant and a list size in :GPU';
 
-sub halves ($in, $out) { $out->[$x] = $in->[$x] * HALF }
+sub halves ($in, $out) { my $x = thread_index(); $out->[$x] = $in->[$x] * HALF }
 is scalar PerCUDA->new(source => \&halves, argument => [ in => 'float', out => 'float' ])->run([ 2, 4 ], []), [ 1, 2 ],
     'use constant with source => \&sub';
-like dies { PerCUDA->new(argument => [ out => 'float' ], source => '$out->[$x] = NOPE;') },
+like dies { PerCUDA->new(argument => [ out => 'float' ], source => 'my $x = thread_index(); $out->[$x] = NOPE;') },
     qr/unknown name 'NOPE'/, 'an unknown bareword';
 is scalar PerCUDA->new(
     argument => [ out => 'float' ],
     constant => { C => 2 },
     size     => [2],
-    source   => '$out->[$x] = C;'
+    source   => 'my $x = thread_index(); $out->[$x] = C;'
 )->run([]), [ 2, 2 ], 'constant => { C => ... } as a bareword in a string kernel';
 
 subtest 'source of the sub' => sub {
@@ -413,8 +466,10 @@ PERL
     like dies { PerCUDA::Kernel::extract_sub("sub k :GPU(f) (\$a) { 1 \n", 'k', 1) }, qr/unbalanced/, 'unbalanced';
 };
 
-like dies { eval q{ package T1; use PerCUDA; sub k :GPU(f) ($a) { $a->[$x] = 1; } 1 } or die $@ },
-    qr/cannot read the source of sub k/, 'a sub compiled from a string has no source file';
+like dies {
+    eval q{ package T1; use PerCUDA; sub k :GPU(f) ($a) { my $x = thread_index(); $a->[$x] = 1; } 1 }
+        or die $@
+}, qr/cannot read the source of sub k/, 'a sub compiled from a string has no source file';
 like dies { eval q{ package T2; use PerCUDA ':gpu'; 1 } or die $@ }, qr/unknown import ':gpu'/, 'unknown import';
 
 is \@warnings, [], 'no warnings';

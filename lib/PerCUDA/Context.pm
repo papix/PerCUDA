@@ -11,7 +11,7 @@ our @CARP_NOT = qw(PerCUDA PerCUDA::Engine);
 # once, and device arrays can be made without a kernel.
 
 my %OPTION =
-    map { $_ => 1 } qw(argument dim size retval constant precision mode engine check perl_jobs cache_dir device);
+    map { $_ => 1 } qw(argument size retval constant precision mode engine check perl_jobs cache_dir device);
 
 sub new ($class, %defaults) {
     for my $key (sort keys %defaults) {
@@ -70,7 +70,7 @@ PerCUDA::Context - Options shared by several kernels
 
     use PerCUDA;
 
-    sub step ($u, $v) { $v->[$x][$y] = 0.5 * $u->[$x][$y] }
+    sub step ($u, $v) { my ($i, $j) = thread_index(); $v->[$i][$j] = 0.5 * $u->[$i][$j] }
 
     my $pc   = PerCUDA->context(engine => $ARGV[0], precision => 'double');
     my $step = $pc->kernel(source => \&step);

@@ -29,6 +29,8 @@ GetOptions(
 ) or die "usage: $0 [--size N] [--steps N] [--perl-jobs N|auto] [MODE ...]\n";
 
 my $KERNEL = <<'KERNEL';
+my ($x, $y)           = thread_index();
+my ($size_x, $size_y) = grid_size();
 my $n = 0;
 for my $dx (-1 .. 1) {
     for my $dy (-1 .. 1) {
@@ -41,7 +43,6 @@ KERNEL
 
 sub runner ($engine) {
     return PerCUDA->new(
-        dim       => 2,
         engine    => $engine,
         perl_jobs => $perl_jobs,
         size      => 'cur',

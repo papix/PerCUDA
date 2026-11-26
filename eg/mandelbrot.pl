@@ -11,6 +11,8 @@ $max   //= 256;
 
 # The image holds iteration counts, so it is an int array.
 sub mandelbrot : GPU({ argument => [ image => 'int', max => 'int' ] }) ($image, $max) {
+    my ($x, $y)           = thread_index();
+    my ($size_x, $size_y) = grid_size();
     my $cr = -2.0 + 3.0 * $y / $size_y;
     my $ci = -1.5 + 3.0 * $x / $size_x;
     my $zr = 0.0;

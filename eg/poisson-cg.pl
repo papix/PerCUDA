@@ -22,6 +22,7 @@ my $h = 1 / ($n + 1);
 
 # precision => 'double' (in configure) makes every array and scalar double.
 sub init : GPU ($r, $p, $h) {
+    my ($x, $y) = thread_index();
     my $px = ($x + 1) * $h;
     my $f  = (2.0 + PI * PI * $px * (1.0 - $px)) * sin(PI * ($y + 1) * $h);
     $r->[$x][$y] = $f;
@@ -30,6 +31,8 @@ sub init : GPU ($r, $p, $h) {
 
 # q = A p
 sub apply : GPU ($p, $q, $inv_h2) {
+    my ($x,      $y)      = thread_index();
+    my ($size_x, $size_y) = grid_size();
     my $s = 4.0 * $p->[$x][$y];
     $s -= $p->[ $x - 1 ][$y] if $x > 0;
     $s -= $p->[ $x + 1 ][$y] if $x < $size_x - 1;
@@ -38,16 +41,24 @@ sub apply : GPU ($p, $q, $inv_h2) {
     $q->[$x][$y] = $s * $inv_h2;
 }
 
-sub product : GPU ($a, $b, $w) { $w->[$x][$y] = $a->[$x][$y] * $b->[$x][$y] }
+sub product : GPU ($a, $b, $w) {
+    my ($x, $y) = thread_index();
+    $w->[$x][$y] = $a->[$x][$y] * $b->[$x][$y];
+}
 
 sub update : GPU ($u, $r, $p, $q, $alpha) {
+    my ($x, $y) = thread_index();
     $u->[$x][$y] += $alpha * $p->[$x][$y];
     $r->[$x][$y] -= $alpha * $q->[$x][$y];
 }
 
-sub direction : GPU ($p, $r, $beta) { $p->[$x][$y] = $r->[$x][$y] + $beta * $p->[$x][$y] }
+sub direction : GPU ($p, $r, $beta) {
+    my ($x, $y) = thread_index();
+    $p->[$x][$y] = $r->[$x][$y] + $beta * $p->[$x][$y];
+}
 
 sub error : GPU ($u, $e, $h) {
+    my ($x, $y) = thread_index();
     my $px = ($x + 1) * $h;
     $e->[$x][$y] = abs($u->[$x][$y] - $px * (1.0 - $px) * sin(PI * ($y + 1) * $h));
 }

@@ -5,6 +5,7 @@ use PerCUDATest;
 use PerCUDA;
 
 my $KERNEL = <<'K';
+my $x = thread_index();
 my $v = $in->[$x];
 my $w = $in2->[$x];
 $out->[$x][0] = exp($v / 4);
@@ -108,7 +109,8 @@ subtest 'accuracy of the exact mode functions' => sub {
     cmp_ok $worst{$_}, '<=', 4, "$_ within 4 ulp (worst $worst{$_})" for sort keys %worst;
 };
 
-like dies { PerCUDA->new(mode => 'slow', argument => [ a => 'f' ], source => '$a->[$x] = 1;') }, qr/mode must be/,
+like dies { PerCUDA->new(mode => 'slow', argument => [ a => 'f' ], source => 'my $x = thread_index(); $a->[$x] = 1;') },
+    qr/mode must be/,
     'rejects unknown modes';
 
 done_testing;

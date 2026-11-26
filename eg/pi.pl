@@ -14,6 +14,7 @@ $seed    //= 1;
 
 # The hit counts are integers; seed is an int because random() takes it.
 sub inside : GPU({ argument => [ hit => 'int' ] }) ($hit, $seed) {
+    my $x = thread_index();
     my $u = random($seed, $x, 0);
     my $v = random($seed, $x, 1);
     $hit->[$x] = $u * $u + $v * $v < 1.0 ? 1 : 0;

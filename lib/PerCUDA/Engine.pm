@@ -1,5 +1,6 @@
 package PerCUDA::Engine;
 use v5.40;
+use List::Util   ();
 use Carp         ();
 use Scalar::Util qw(blessed refaddr);
 use PerCUDA::Array;
@@ -37,9 +38,11 @@ sub storage ($class, %args) {
 sub init_storage ($self) { }
 
 # The error of check => 1, the same on both engines.
+# $thread: [ name => index, ... ] per axis, the names the kernel gives the
+# thread index (undef where it declares none).
 sub out_of_range ($name, $line, $thread, $axis, $index, $size) {
-    my @axes  = qw(x y z);
-    my $where = join ', ', map { "\$$axes[$_]=$thread->[$_]" } 0 .. $#$thread;
+    my @pairs = List::Util::pairs(@$thread);
+    my $where = join ', ', map { defined $_->[0] ? "\$$_->[0]=$_->[1]" : $_->[1] } @pairs;
     Carp::croak("PerCUDA: index out of range at kernel line $line: \$$name, dimension $axis, index $index"
             . ' is not in 0 .. '
             . ($size - 1)
@@ -115,7 +118,10 @@ sub layout ($self, $values) {
         if (defined $size_value && !ref $size_value && $size_arg->{kind} eq 'unused') {    # a number: a 1-D grid
             Carp::croak("PerCUDA: size '$name' must be a non-negative integer, not $size_value")
                 unless $size_value =~ /\A\s*\+?[0-9]+\s*\z/;
-            Carp::croak("PerCUDA: size '$name' gives 1 dimension but dim is $self->{dim}") unless $self->{dim} == 1;
+            Carp::croak("PerCUDA: size '$name' gives 1 dimension but "
+                    . $self->{analyzer}->index_function
+                    . " gives $self->{dim}")
+                unless $self->{dim} == 1;
             $size_dims = [ $size_value + 0 ];
         }
         $size_dims //=

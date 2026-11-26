@@ -5,7 +5,6 @@ use PerCUDA;
 my sub runner ($source, %args) {
     return PerCUDA->new(
         engine   => 'perl',
-        dim      => 2,
         argument => [ in => 'i', out => 'f' ],
         retval   => ['out'],
         source   => $source,
@@ -19,7 +18,8 @@ my $in = [
         [ map { $i * 7 - $_ * 3 } 0 .. 8 ]
     } 0 .. 12
 ];    # 13 x 9
-my $kernel   = 'my $s = 0.0; for my $k (0 .. $in->[$x][$y] % 5) { $s += $k / 3; } $out->[$x][$y] = $s;';
+my $kernel =
+    'my ($x, $y) = thread_index(); my $s = 0.0; for my $k (0 .. $in->[$x][$y] % 5) { $s += $k / 3; } $out->[$x][$y] = $s;';
 my $expected = runner($kernel)->run($in, []);
 
 for my $jobs (2, 4, 13, 50, 'auto') {
@@ -27,12 +27,12 @@ for my $jobs (2, 4, 13, 50, 'auto') {
 }
 
 # Stores into rows of other threads cannot be split; the kernel runs in one process.
-my $other_rows = '$out->[12 - $x][$y] = $in->[$x][$y];';
+my $other_rows = 'my ($x, $y) = thread_index(); $out->[12 - $x][$y] = $in->[$x][$y];';
 is scalar runner($other_rows, perl_jobs => 4)->run($in, []), runner($other_rows)->run($in, []),
     'kernels writing other rows fall back to one process';
 
 my $out = [ map { [ (5) x 9 ] } 0 .. 12 ];
-runner('$out->[$x][$y] = 1 if $y == 0;', perl_jobs => 3)->run($in, $out);
+runner('my ($x, $y) = thread_index(); $out->[$x][$y] = 1 if $y == 0;', perl_jobs => 3)->run($in, $out);
 is [ map { "@$_" } @$out ], [ ("1 5 5 5 5 5 5 5 5") x 13 ], 'unwritten elements keep their values';
 
 like dies { runner($kernel, perl_jobs => 0) },      qr/perl_jobs must be/, 'rejects 0';

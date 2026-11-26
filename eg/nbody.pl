@@ -19,6 +19,7 @@ my $eps2 = 0.05**2;
 
 # Every kernel takes the masses m first, whether it uses them or not.
 sub init : GPU ($m, $px, $py, $pz, $seed) {
+    my $x   = thread_index();
     my $r   = random($seed, $x, 0)**(1.0 / 3.0);
     my $c   = 2.0 * random($seed, $x, 1) - 1.0;
     my $s   = sqrt(1.0 - $c * $c);
@@ -29,10 +30,12 @@ sub init : GPU ($m, $px, $py, $pz, $seed) {
 }
 
 sub accel : GPU ($m, $px, $py, $pz, $ax, $ay, $az, $eps2) {
-    my $sx = 0.0;
-    my $sy = 0.0;
-    my $sz = 0.0;
-    for my $j (0 .. $size_x - 1) {
+    my $x      = thread_index();
+    my $bodies = grid_size();
+    my $sx     = 0.0;
+    my $sy     = 0.0;
+    my $sz     = 0.0;
+    for my $j (0 .. $bodies - 1) {
         my $dx = $px->[$j] - $px->[$x];
         my $dy = $py->[$j] - $py->[$x];
         my $dz = $pz->[$j] - $pz->[$x];
@@ -48,12 +51,14 @@ sub accel : GPU ($m, $px, $py, $pz, $ax, $ay, $az, $eps2) {
 }
 
 sub kick : GPU ($m, $vx, $vy, $vz, $ax, $ay, $az, $h) {
+    my $x = thread_index();
     $vx->[$x] += $h * $ax->[$x];
     $vy->[$x] += $h * $ay->[$x];
     $vz->[$x] += $h * $az->[$x];
 }
 
 sub drift : GPU ($m, $px, $py, $pz, $vx, $vy, $vz, $h) {
+    my $x = thread_index();
     $px->[$x] += $h * $vx->[$x];
     $py->[$x] += $h * $vy->[$x];
     $pz->[$x] += $h * $vz->[$x];
@@ -61,8 +66,10 @@ sub drift : GPU ($m, $px, $py, $pz, $vx, $vy, $vz, $h) {
 
 # kinetic + half the pair potentials
 sub energy : GPU ($m, $px, $py, $pz, $vx, $vy, $vz, $e, $eps2) {
-    my $pot = 0.0;
-    for my $j (0 .. $size_x - 1) {
+    my $x      = thread_index();
+    my $bodies = grid_size();
+    my $pot    = 0.0;
+    for my $j (0 .. $bodies - 1) {
         if ($j != $x) {
             my $dx = $px->[$j] - $px->[$x];
             my $dy = $py->[$j] - $py->[$x];
@@ -75,6 +82,7 @@ sub energy : GPU ($m, $px, $py, $pz, $vx, $vy, $vz, $e, $eps2) {
 }
 
 sub kinetic : GPU ($m, $vx, $vy, $vz, $e) {
+    my $x = thread_index();
     $e->[$x] = 0.5 * $m->[$x] * ($vx->[$x] * $vx->[$x] + $vy->[$x] * $vy->[$x] + $vz->[$x] * $vz->[$x]);
 }
 

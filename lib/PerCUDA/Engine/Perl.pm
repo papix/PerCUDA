@@ -102,8 +102,8 @@ sub run ($self, @values) {
 }
 
 # With perl_jobs > 1, splits the x axis between forked processes, which send
-# back their rows of the retval arrays. Only kernels whose stores all use $x
-# as the first index qualify, so that the processes never write the same
+# back their rows of the retval arrays. Only kernels whose stores all use the
+# first thread index as the first index qualify, so that the processes never write the same
 # element. Rows are dealt out in turn, which balances uneven rows (e.g. the
 # Mandelbrot set). Returns false when the kernel has to run in this process.
 sub _run_parallel ($self, $call, $layout, $results) {
