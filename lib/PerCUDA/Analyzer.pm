@@ -42,12 +42,12 @@ sub dim  ($self) { return $self->{dim} }
 sub real ($self) { return $self->{real} }
 sub axes ($self) { return @AXES[ 0 .. $self->{dim} - 1 ] }
 
-# The names the kernel gives the thread index, one per axis (undef where it
-# declares none).
 # 'thread_index()' or 'grid_size()': the declaration that gives the
 # dimensions (thread_index() when there are both), for messages.
 sub index_function ($self) { return $self->{index_function} }
 
+# The names the kernel gives the thread index, one per axis (undef where it
+# declares none).
 sub thread_names ($self) {
     return [ map { $self->{thread_names}[$_] } 0 .. $self->{dim} - 1 ];
 }
@@ -134,7 +134,7 @@ sub infer_types ($ast, $names, $real, $int_names = {}) {
     );
 
     # A local that must be an int passes it on to what is assigned to it
-    # (my $row = $x * $w; ... $a->[$row]: $w is an int).
+    # (my $row = $i * $w; ... $a->[$row]: $w is an int).
     my %assigned;
     walk(
         $ast,
@@ -166,9 +166,8 @@ sub index_dim ($ast) {
         $ast,
         sub ($n) {
             return unless $n->{t} eq 'index';
-            my $func = $n->{what} eq 'thread' ? 'thread_index()' : 'grid_size()';
-            error("my (...) = $func must be a top-level statement of the kernel", $n) unless $top{ refaddr $n };
-            error("$func is called twice",                                        $n) if $found{ $n->{what} };
+            error("my (...) = $n->{func} must be a top-level statement of the kernel", $n) unless $top{ refaddr $n };
+            error("$n->{func} is called twice", $n) if $found{ $n->{what} };
             $found{ $n->{what} } = $n;
         }
     );
@@ -183,8 +182,8 @@ sub index_dim ($ast) {
 # The function whose declaration gives the dimensions, as index_dim finds
 # it: 'thread_index()', else 'grid_size()', else undef.
 sub declared_function ($ast) {
-    my %what = map { $_->{what} => 1 } grep { $_->{t} eq 'index' } @{ $ast->{body} };
-    return $what{thread} ? 'thread_index()' : $what{grid} ? 'grid_size()' : undef;
+    my %func = map { $_->{what} => $_->{func} } grep { $_->{t} eq 'index' } @{ $ast->{body} };
+    return $func{thread} // $func{grid};
 }
 
 # Replaces each $NAME of %$constants in the kernel with its value, an int
@@ -347,6 +346,8 @@ sub _lookup ($self, $name, $node) {
 }
 
 sub _declare ($self, $node) {
+    my $old = $self->{scopes}[-1]{ $node->{name} };
+    error("\$$node->{name} is already declared by thread_index() or grid_size()", $node) if $old && $old->{index};
     my $id  = $self->new_id;
     my $sym = $self->_new_symbol(name => $node->{name}, cname => "l${id}_$node->{name}");
     $self->{scopes}[-1]{ $node->{name} } = $sym;
@@ -374,15 +375,15 @@ sub _resolve_stmt ($self, $s) {
     }
     elsif ($t eq 'index') {    # my ($x, $y) = thread_index(); (see index_dim)
         my @names = @{ $s->{names} };
-        my $func  = $s->{what} eq 'thread' ? 'thread_index()' : 'grid_size()';
-        error("my (...) = $func gives " . @names . " value(s) but the grid has $self->{dim} dimension(s)", $s)
+        error("my (...) = $s->{func} gives " . @names . " value(s) but the grid has $self->{dim} dimension(s)", $s)
             if @names != $self->{dim};
-        $self->{index_function} = $func if $s->{what} eq 'thread' || !$self->{index_function};
+        $self->{index_function} = $s->{func} if $s->{what} eq 'thread' || !$self->{index_function};
         for my $axis (0 .. $#names) {
             my $name = $names[$axis];
             error("\$$name has the name of an argument", $s) if $self->{scopes}[0]{$name};
+            error("\$$name is already declared",         $s) if $self->{scopes}[-1]{$name};
             my $cname = $s->{what} eq 'thread' ? "percuda_$AXES[$axis]" : "percuda_size_$AXES[$axis]";
-            my $sym   = $self->_new_symbol(name => $name, cname => $cname, fixed => 1);
+            my $sym   = $self->_new_symbol(name => $name, cname => $cname, fixed => 1, index => 1);
             $self->{scopes}[-1]{$name} = $sym;
             next unless $s->{what} eq 'thread';
             $self->{thread_syms}[$axis]  = $sym;

@@ -15,6 +15,8 @@ my %OPTION =
 
 sub new ($class, %defaults) {
     for my $key (sort keys %defaults) {
+        my $removed = PerCUDA::Data::removed_option($key);
+        Carp::croak("PerCUDA: $removed") if $removed;
         Carp::croak("PerCUDA: unknown option '$key'") unless $OPTION{$key};
     }
     my $engine = $defaults{engine} // PerCUDA::default_engine();

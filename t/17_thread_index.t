@@ -107,7 +107,7 @@ for my $engine (both_engines()) {
             argument => [ out => 'int' ],
             source   => '$out->[5] = 1;',
         );
-        like dies { $plain->run([0]) }, qr/index 5 is not in 0 \.\. 0 \(thread \d, \d\)/,
+        like dies { $plain->run([0]) }, qr/index 5 is not in 0 \.\. 0 \(thread index \d, \d\)/,
             'check without declared names';
     };
 }
@@ -123,6 +123,10 @@ subtest 'kernel subs' => sub {
 };
 
 my @rejected = (
+    [ 'for (my $k = grid_size(); $k < 3; $k++) { $out->[$k] = 1; }', qr/grid_size\(\) can only be used as my/ ],
+    [ 'for (my ($k) = thread_index(); $k < 3; $k++) { }',            qr/my \(\.\.\.\) is not supported in a for loop/ ],
+    [ 'my ($i) = thread_index(); my ($i) = grid_size();',            qr/\$i is already declared/ ],
+    [ 'my $i = thread_index(); my $i = 3; $out->[$i] = 1;',          qr/\$i is already declared by thread_index\(\)/ ],
     [ '$out->[$x] = 1;',                                     qr/variable \$x is not declared .*thread_index\(\)/ ],
     [ '$out->[0] = $size_x;',                                qr/variable \$size_x is not declared .*grid_size\(\)/ ],
     [ '$out->[thread_index()] = 1;',                         qr/thread_index\(\) can only be used as my/ ],
@@ -191,5 +195,15 @@ is PerCUDA->new(
     argument => [ out => 'int' ],
     source   => '$out->[0] += 1;',
 )->run([0]), [6], 'without thread_index the size list gives the dimensions';
+
+# Removed options say what replaces them, whatever the entry point.
+for my $case ([ dim => 2, qr/dim is not an option/ ], [ retval => [], qr/retval is now called returns/ ]) {
+    my ($key, $value, $error) = @$case;
+    like dies { PerCUDA->new(engine => 'perl', $key => $value, argument => [ out => 'int' ], source => '1;') },
+        $error, "new: $key";
+    like dies { PerCUDA->context(engine => 'perl', $key => $value) }, $error, "context: $key";
+    like dies { PerCUDA::Kernel::parse_attribute("{ $key => 1 }") },  $error, ":GPU options: $key";
+    like dies { PerCUDA::configure($key => $value) },                 $error, "configure: $key";
+}
 
 done_testing;

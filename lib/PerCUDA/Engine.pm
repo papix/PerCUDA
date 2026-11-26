@@ -39,10 +39,14 @@ sub init_storage ($self) { }
 
 # The error of check => 1, the same on both engines.
 # $thread: [ name => index, ... ] per axis, the names the kernel gives the
-# thread index (undef where it declares none).
+# thread index (undef where it declares none): "(thread $i=0, $j=1)", or
+# "(thread index 0, 1)" for a kernel without thread_index().
 sub out_of_range ($name, $line, $thread, $axis, $index, $size) {
     my @pairs = List::Util::pairs(@$thread);
-    my $where = join ', ', map { defined $_->[0] ? "\$$_->[0]=$_->[1]" : $_->[1] } @pairs;
+    my $where =
+        (grep { defined $_->[0] } @pairs)
+        ? join(', ', map { defined $_->[0] ? "\$$_->[0]=$_->[1]" : $_->[1] } @pairs)
+        : 'index ' . join(', ', map { $_->[1] } @pairs);
     Carp::croak("PerCUDA: index out of range at kernel line $line: \$$name, dimension $axis, index $index"
             . ' is not in 0 .. '
             . ($size - 1)

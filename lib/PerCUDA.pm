@@ -22,6 +22,10 @@ our @CARP_NOT = qw(PerCUDA::Engine PerCUDA::Kernel PerCUDA::Context);
 our $START_DIR = Cwd::getcwd();
 
 sub new ($class, %args) {
+    for my $key (sort keys %args) {
+        my $removed = PerCUDA::Data::removed_option($key);
+        Carp::croak("PerCUDA: $removed") if $removed;
+    }
 
     # The options of a context (internal: from PerCUDA::Context->kernel), then
     # those of a :GPU sub's attribute, then those given here; argument types
@@ -137,9 +141,6 @@ sub new ($class, %args) {
     }
 
     # The grid has as many dimensions as my (...) = thread_index() declares.
-    Carp::croak("PerCUDA: dim is not an option; the kernel's my (\$x, ...) = thread_index() gives the dimensions")
-        if exists $args{dim};
-    Carp::croak("PerCUDA: retval is now called returns") if exists $args{retval};
     my $declared = index_dim($ast);
     my $dim      = $declared // (ref $size ? scalar @$size : 1);
     Carp::croak("PerCUDA: size gives " . @$size . " dimension(s) but " . declared_function($ast) . " gives $dim")
@@ -170,8 +171,9 @@ sub new ($class, %args) {
     if (!ref $size && !defined $size) {
 
         # By default the grid is the shape of the first non-empty array passed
-        # to run, among: arrays the kernel reads with at least dim dimensions,
-        # other arrays with at least dim dimensions (any arrays if none has).
+        # to run, among: arrays the kernel reads with at least as many
+        # dimensions as the grid, other arrays with that many (any arrays if
+        # none has).
         my @arrays = grep { $_->{kind} eq 'array' } @{ $an->args };
         my @full   = grep { $_->{rank} >= $dim } @arrays;
         my %seen;
@@ -560,7 +562,8 @@ split; others run in one process.
 =item C<check>: true to check every array index (default off). An index out
 of range on either engine makes C<run> die with the array, the dimension, the
 index, the valid range, the kernel line and the thread (by the names
-C<thread_index()> gives it), e.g.
+C<thread_index()> gives it, or C<(thread index 0, 1)> for a kernel
+without C<thread_index()>), e.g.
 
     PerCUDA: index out of range at kernel line 3: $in, dimension 1, index 3 is not in 0 .. 2 (thread $i=0, $j=1)
 
@@ -798,8 +801,10 @@ C<perl -e> or a string C<eval>; see L</STRING KERNELS>); it never runs as
 Perl, so it cannot see variables outside the sub (pass them as arguments, or
 use constants). C<use PerCUDA> enables the C<:GPU> attribute in the calling
 package and imports C<thread_index> and C<grid_size> into it, so that the
-body compiles under C<strict> (called outside a kernel, they die; a sub of the package by either name is kept);
-C<use PerCUDA ()> does neither. The runner of a C<:GPU> sub is built on the first
+body compiles under C<strict> (called outside a kernel, they die). A sub
+the package defines by either name before C<use PerCUDA> is kept; one
+defined after it replaces the import, with Perl's usual "Subroutine
+redefined" warning. C<use PerCUDA ()> does neither. The runner of a C<:GPU> sub is built on the first
 call; kernel line numbers in errors are lines of the file.
 C<< runner(\&scale) >> returns it, e.g. for C<< ->array >>,
 C<< ->arguments >> or C<< ->cuda_source >>, and
@@ -835,8 +840,10 @@ the grid size with C<grid_size()>, as Numba's C<cuda.grid(2)> and
 C<cuda.gridsize(2)> or Warp's C<wp.tid()> do. The number of variables
 (1 to 3) is the number of dimensions of the grid; when both appear, they
 must give the same number. Each may appear once, as a statement of its own
-at the top level of the kernel (not inside a block), and the variables exist
-from there on. Any names will do; the last one runs along CUDA's x axis
+at the top level of the kernel (not inside a block or the first part of a C-style C<for>),
+and the variables exist from there on. Any names will do, but not those of
+arguments, and each name is declared once (a later C<my> of the same name,
+or the same name in both declarations, is an error); the last one runs along CUDA's x axis
 (consecutive threads, coalesced access).
 
 =head2 Statements and expressions

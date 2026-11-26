@@ -129,7 +129,8 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     - `check`: true to check every array index (default off). An index out
     of range on either engine makes `run` die with the array, the dimension, the
     index, the valid range, the kernel line and the thread (by the names
-    `thread_index()` gives it), e.g.
+    `thread_index()` gives it, or `(thread index 0, 1)` for a kernel
+    without `thread_index()`), e.g.
 
             PerCUDA: index out of range at kernel line 3: $in, dimension 1, index 3 is not in 0 .. 2 (thread $i=0, $j=1)
 
@@ -354,8 +355,10 @@ kernel, run once per element of the grid, in the kernel language (see
 Perl, so it cannot see variables outside the sub (pass them as arguments, or
 use constants). `use PerCUDA` enables the `:GPU` attribute in the calling
 package and imports `thread_index` and `grid_size` into it, so that the
-body compiles under `strict` (called outside a kernel, they die; a sub of the package by either name is kept);
-`use PerCUDA ()` does neither. The runner of a `:GPU` sub is built on the first
+body compiles under `strict` (called outside a kernel, they die). A sub
+the package defines by either name before `use PerCUDA` is kept; one
+defined after it replaces the import, with Perl's usual "Subroutine
+redefined" warning. `use PerCUDA ()` does neither. The runner of a `:GPU` sub is built on the first
 call; kernel line numbers in errors are lines of the file.
 `runner(\&scale)` returns it, e.g. for `->array`,
 `->arguments` or `->cuda_source`, and
@@ -391,8 +394,10 @@ the grid size with `grid_size()`, as Numba's `cuda.grid(2)` and
 `cuda.gridsize(2)` or Warp's `wp.tid()` do. The number of variables
 (1 to 3) is the number of dimensions of the grid; when both appear, they
 must give the same number. Each may appear once, as a statement of its own
-at the top level of the kernel (not inside a block), and the variables exist
-from there on. Any names will do; the last one runs along CUDA's x axis
+at the top level of the kernel (not inside a block or the first part of a C-style `for`),
+and the variables exist from there on. Any names will do, but not those of
+arguments, and each name is declared once (a later `my` of the same name,
+or the same name in both declarations, is an error); the last one runs along CUDA's x axis
 (consecutive threads, coalesced access).
 
 ## Statements and expressions

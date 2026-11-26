@@ -12,6 +12,12 @@ Setup, commands, layout and style are in `CONTRIBUTING.md`; read it first.
 
 ## Decisions and pitfalls
 
+- Kernels have no implicit variables (the maintainer's decision): they read
+  the thread index with `my ($i, $j) = thread_index();` and the grid size with
+  `grid_size()`, whose number of variables is the grid's dimensions (there is
+  no `dim` option). `run` returns the arrays named by `returns` (formerly
+  `retval`). Removed options are reported through
+  `PerCUDA::Data::removed_option` at every entry point.
 - English only (the maintainer's decision): code, docs, commit messages, pull
   requests and issues. `author/lint.sh` flags Japanese text in files.
 - No experimental Perl features (the maintainer's decision); stable `use v5.40`
