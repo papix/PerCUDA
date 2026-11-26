@@ -67,7 +67,7 @@ Setup, commands, layout and style are in `CONTRIBUTING.md`; read it first.
   `perl_jobs` processes. Keep those proofs conservative; `t/02_codegen.t` and
   `t/06_parity.t` hold the counterexamples.
 - `PerCUDA::Array` (device arrays) is used in place on both engines: no
-  copies, no conversion, writes visible even outside retval, and `run`
+  copies, no conversion, writes visible even outside `returns`, and `run`
   returns without waiting on the GPU. Engine code must check `device` in the
   layout before any nested-array or ndarray handling.
 - `perl_jobs` forks: children must leave with `POSIX::_exit` so that they run

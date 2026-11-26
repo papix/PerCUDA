@@ -41,7 +41,7 @@ subtest 'division by zero gives inf and nan' => sub {
         my $r = PerCUDA->new(
             engine   => $engine,
             argument => [ in => 'i', out => 'f' ],
-            retval   => ['out'],
+            returns  => ['out'],
             source   => 'my $x = thread_index(); my $d = $in->[$x] % 3; $out->[$x] = $in->[$x] / $d;',
         );
         $result{$engine} = $r->run([ -4 .. 4 ], []);
@@ -54,7 +54,7 @@ subtest 'mode => fast' => sub {
     my %args = (
         engine   => 'perl',
         argument => [ in => 'f', out => 'f' ],
-        retval   => ['out'],
+        returns  => ['out'],
         source   =>
             'my $x = thread_index(); my $s = 0.0; for my $i (1 .. 100) { $s += $in->[$x] / $i; } $out->[$x] = $s;',
     );
@@ -74,7 +74,7 @@ for my $name (sort keys %CASE) {
             my $r = PerCUDA->new(
                 engine   => $engine,
                 argument => [ in => 'i', out => 'i' ],
-                retval   => ['out'],
+                returns  => ['out'],
                 source   => $CASE{$name},
             );
             $result{$engine} = $r->run([ -40 .. 40 ], []);
@@ -84,18 +84,18 @@ for my $name (sort keys %CASE) {
     };
 }
 
-subtest 'arrays outside retval are not modified' => sub {
+subtest 'arrays outside returns are not modified' => sub {
     for my $engine (both_engines()) {
         my $r = PerCUDA->new(
             engine   => $engine,
             argument => [ in => 'i', tmp => 'i', unused => 'i', out => 'i' ],
-            retval   => ['out'],
+            returns  => ['out'],
             source   =>
                 'my $x = thread_index(); $tmp->[$x] = $in->[$x] * 2; $out->[$x] = $tmp->[$x] + 1 + $unused->[$x];',
         );
         my ($in, $tmp, $unused) = ([ 1 .. 4 ], [ (9) x 4 ], []);
         is scalar $r->run($in, $tmp, $unused, []), [ 3, 5, 7, 9 ], "$engine: result";
-        is $tmp,                                   [ (9) x 4 ],    "$engine: written non-retval array is unchanged";
+        is $tmp,                                   [ (9) x 4 ],    "$engine: written non-returns array is unchanged";
         is $unused,                                [],             "$engine: empty input array is unchanged";
     }
 };
@@ -106,7 +106,7 @@ subtest 'empty output is zero filled' => sub {
             engine   => $engine,
             argument => [ in => 'i', out => 'i' ],
             size     => 'in',
-            retval   => ['out'],
+            returns  => ['out'],
             source   => 'my $x = thread_index(); $out->[$x] = 1 if $x % 2;',
         );
         is scalar $r->run([ 1 .. 4 ], []), [ 0, 1, 0, 1 ], $engine;
@@ -128,7 +128,7 @@ subtest 'elements the kernel does not write keep their values' => sub {
                 engine   => $engine,
                 argument => [ in => 'i', out => 'i' ],
                 size     => 'in',
-                retval   => ['out'],
+                returns  => ['out'],
                 source   => $source,
             );
             is scalar $r->run([ 1 .. 4 ], [ (9) x 4 ]), $expected, "$name ($engine)";
@@ -150,7 +150,7 @@ K
                 engine    => $engine,
                 precision => $precision,
                 argument  => [ in => 'f', out => 'd' ],
-                retval    => ['out'],
+                returns   => ['out'],
                 source    => $source,
             );
             like $r->cuda_source, $precision eq 'double' ? qr/double l\d+_s/ : qr/float l\d+_s/, "$precision local";

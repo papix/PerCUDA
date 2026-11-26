@@ -18,9 +18,9 @@ sub matmul : GPU ($array1, $array2, $array3, $N) {
 }
 
 # The types (float arrays; N is an int, as a loop bound), the grid dimension (2, from thread_index),
-# size (array1) and retval (array3, the array written) are inferred.
+# size (array1) and returns (array3, the array written: what the call returns) are inferred.
 configure(engine => $ARGV[0]);
 
-my $retval = matmul($array, $array, [], 3);
+my $product = matmul($array, $array, [], 3);
 say 'engine: ', runner(\&matmul)->engine;
-say join ' ',   @$_ for @$retval;
+say join ' ',   @$_ for @$product;

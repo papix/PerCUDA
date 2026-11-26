@@ -25,7 +25,7 @@ my %INDEX_FUNCTION = map {
 } sort keys %PerCUDA::Parser::INDEX;
 
 my %OPTION =
-    map { $_ => 1 } qw(argument size retval constant precision mode engine check perl_jobs cache_dir device);
+    map { $_ => 1 } qw(argument size returns constant precision mode engine check perl_jobs cache_dir device);
 my %KERNEL;    # refaddr of a :GPU sub => sub returning its runner
 my %SOURCE;    # refaddr of a sub => [ parameter names, body, package ]
 my %ATTRIBUTE;    # refaddr of a :GPU sub => arguments of PerCUDA->new from its attribute
@@ -242,7 +242,7 @@ sub configure ($class, $package, @options) {
     }
     for my $key (sort keys %options) {
         Carp::croak("PerCUDA: configure cannot set '$key' (it belongs to each kernel)")
-            if $key =~ /\A(?:source|argument|size|retval)\z/;
+            if $key =~ /\A(?:source|argument|size|returns)\z/;
     }
     return $CONFIG{$package} = PerCUDA::Context->new(%options);
 }

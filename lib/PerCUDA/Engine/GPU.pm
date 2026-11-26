@@ -12,7 +12,7 @@ use PerCUDA::Reduce;
 # Runs the kernel on a GPU: the CUDA C++ from PerCUDA::CodeGen::CUDA is
 # compiled with NVRTC (cached on disk), arrays are converted and copied to
 # reused device buffers by CUDA::DriverAPI, scalars are passed by value, and
-# the retval arrays are copied back into the caller's arrays.
+# the returned arrays are copied back into the caller's arrays.
 
 my %TYPE  = (i => 'i32', f => 'f32', d => 'f64');
 my %SIZE  = (i => 4,     f => 4,     d => 8);
@@ -217,7 +217,7 @@ sub run ($self, @values) {
     }
 
     my @results;
-    for my $name (@{ $self->{retval} }) {
+    for my $name (@{ $self->{returns} }) {
         my $i = $self->{index}{$name};
 
         # A device array stays on the device; run returns without waiting for
@@ -253,7 +253,7 @@ sub run ($self, @values) {
         );
         push @results, $values[$i];
     }
-    $self->{context}->synchronize unless @results;    # report kernel errors even without retval
+    $self->{context}->synchronize unless @results;    # report kernel errors even when nothing is returned
     return @results;
 }
 

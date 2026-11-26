@@ -32,7 +32,7 @@ my sub run ($engine, $mode, $type) {
         mode     => $mode,
         size     => 'in',
         argument => [ in => $type, in2 => $type, out => $type ],
-        retval   => ['out'],
+        returns  => ['out'],
         source   => $KERNEL,
         $type eq 'd' ? (precision => 'double') : (),
     );

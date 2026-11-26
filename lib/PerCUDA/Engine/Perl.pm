@@ -54,7 +54,7 @@ sub run ($self, @values) {
     for my $i (sort { $a <=> $b } keys %{ $layout->{arrays} }) {
         my $arg = $self->{args}[$i];
         my ($dims, $empty, $ndarray) = @{ $layout->{arrays}{$i} }{qw(dims empty ndarray)};
-        my $retval = $self->{is_retval}{ $arg->{name} };
+        my $returned = $self->{is_returned}{ $arg->{name} };
 
         # A device array holds a nested array already converted to its type,
         # used in place.
@@ -68,26 +68,26 @@ sub run ($self, @values) {
         my $value = $ndarray && !$empty ? $values[$i]->unpdl : $values[$i];
 
         # The GPU sees the values as converted to the declared type, and only
-        # retval arrays are copied back to the caller.
+        # returned arrays are copied back to the caller.
         my $convert = $arg->{type} eq 'i' || ($arg->{type} eq 'f' && ($self->{mode} // 'compat') ne 'fast');
         my $converted =
-              $empty                      ? zeros($dims)
-            : $convert                    ? convert_array($value, $arg->{rank}, $arg->{type})
-            : $ndarray                    ? $value
-            : $arg->{written} && !$retval ? copy_array($value, $arg->{rank})
-            :                               undef;
+              $empty                        ? zeros($dims)
+            : $convert                      ? convert_array($value, $arg->{rank}, $arg->{type})
+            : $ndarray                      ? $value
+            : $arg->{written} && !$returned ? copy_array($value, $arg->{rank})
+            :                                 undef;
         next unless $converted;
-        if ($retval && $ndarray) {
+        if ($returned && $ndarray) {
             $call[$i] = $ndarray_out{$i} = $converted;
         }
-        elsif ($retval) {
+        elsif ($returned) {
             @{ $values[$i] } = @$converted;    # updated in place, like the GPU engine
         }
         else {
             $call[$i] = $converted;
         }
     }
-    my @results = map { $self->{index}{$_} } @{ $self->{retval} };
+    my @results = map { $self->{index}{$_} } @{ $self->{returns} };
     if (!$self->_run_parallel(\@call, $layout, \@results)) {
         $self->{code}->(@call, @{ $layout->{grid} });
     }
@@ -102,7 +102,7 @@ sub run ($self, @values) {
 }
 
 # With perl_jobs > 1, splits the x axis between forked processes, which send
-# back their rows of the retval arrays. Only kernels whose stores all use the
+# back their rows of the returned arrays. Only kernels whose stores all use the
 # first thread index as the first index qualify, so that the processes never write the same
 # element. Rows are dealt out in turn, which balances uneven rows (e.g. the
 # Mandelbrot set). Returns false when the kernel has to run in this process.
@@ -112,7 +112,7 @@ sub _run_parallel ($self, $call, $layout, $results) {
     $jobs = $size_x if $jobs > $size_x;
     return 0 if $jobs < 2 || !$self->{analyzer}->writes_own_rows;
 
-    # Arrays whose new contents must survive the run: retval arrays and
+    # Arrays whose new contents must survive the run: returned arrays and
     # written device arrays.
     my %kept = map { $_ => 1 } @$results,
         grep { $layout->{arrays}{$_}{device} && $self->{args}[$_]{written} } keys %{ $layout->{arrays} };

@@ -97,7 +97,7 @@ for my $case (@cases) {
             my $r = PerCUDA->new(
                 engine   => $engine,
                 argument => $case->{argument},
-                retval   => ['out'],
+                returns  => ['out'],
                 source   => $case->{source},
             );
             $result{$engine} = $r->run([ map { $_ - 50 } 0 .. $N - 1 ], []);
@@ -126,7 +126,7 @@ subtest '3D grid and scalar arguments' => sub {
         my $r = PerCUDA->new(
             engine   => $engine,
             argument => [ c => 'i', out => 'f', scale => 'f' ],
-            retval   => ['out'],
+            returns  => ['out'],
             source   => 'my ($x, $y, $z) = thread_index(); my ($size_x, $size_y, $size_z) = grid_size();'
                 . ' $out->[$x][$y][$z] = $c->[$x][$y][$z] * $scale + $size_x * $size_y * $size_z;',
         );

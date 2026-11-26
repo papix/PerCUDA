@@ -55,7 +55,10 @@ like dies { build('$x->[0] = 1;', argument => [ x => 'f' ]) }, qr/\$x has the na
     'a declared thread index cannot reuse an argument name';
 ok(PerCUDA->new(engine => 'perl', argument => [ x => 'f' ], source => '$x->[0] = 1;'),
     'x is not a reserved argument name');
-like dies { build('$a->[$x] = $n;', retval => ['n']) },  qr/must be an array/, 'retval must be an array';
-like dies { build('$a->[$x] = 1;',  engine => 'cuda') }, qr/engine must be/,   'rejects unknown engine';
+like dies { build('$a->[$x] = $n;', returns => ['n']) }, qr/must be an array/, 'returns must be an array';
+like dies { build('$a->[$x] = 1;', returns => ['b']) }, qr/'b' in returns is not an argument/,
+    'returns names arguments';
+like dies { build('$a->[$x] = 1;', retval => ['a']) },  qr/retval is now called returns/, 'retval is gone';
+like dies { build('$a->[$x] = 1;', engine => 'cuda') }, qr/engine must be/,               'rejects unknown engine';
 
 done_testing;

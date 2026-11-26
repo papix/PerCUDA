@@ -10,17 +10,17 @@ our @CARP_NOT = qw(PerCUDA PerCUDA::Runtime);
 
 # Base class of the engines. Both engines share the calling convention of
 # run: one value per argument, empty arrays take the shape of the size
-# argument and are zero filled, and only retval arrays change for the caller
+# argument and are zero filled, and only the returned arrays change for the caller
 # (by default, every array the kernel writes; see PerCUDA->new).
 # PerCUDA::Array values stay with the engine and are used in place.
 
 sub new ($class, %args) {
-    my $self = bless {%args}, $class;    # analyzer, size, retval (+ engine specific)
+    my $self = bless {%args}, $class;    # analyzer, size, returns (+ engine specific)
     my $an   = $self->{analyzer};
-    $self->{args}      = $an->args;
-    $self->{dim}       = $an->dim;
-    $self->{index}     = { map { $self->{args}[$_]{name} => $_ } 0 .. $#{ $self->{args} } };
-    $self->{is_retval} = { map { $_                      => 1 } @{ $self->{retval} } };
+    $self->{args}        = $an->args;
+    $self->{dim}         = $an->dim;
+    $self->{index}       = { map { $self->{args}[$_]{name} => $_ } 0 .. $#{ $self->{args} } };
+    $self->{is_returned} = { map { $_                      => 1 } @{ $self->{returns} } };
     $self->init;
     return $self;
 }

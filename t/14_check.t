@@ -12,7 +12,7 @@ my sub runner ($engine, $source, %args) {
         check    => 1,
         size     => 'in',
         argument => [ in => 'f', out => 'f' ],
-        retval   => ['out'],
+        returns  => ['out'],
         source   => $source,
         %args,
     );
@@ -96,7 +96,7 @@ like dies { runner('perl', 'my ($x, $y) = thread_index(); $out->[$x][$y] = $in->
 my $plain = PerCUDA->new(
     engine   => 'perl',
     argument => [ in => 'f', out => 'f' ],
-    retval   => ['out'],
+    returns  => ['out'],
     source   => 'my $x = thread_index(); $out->[$x] = $in->[$x];'
 );
 unlike $plain->cuda_source, qr/percuda_at|percuda_err/, 'without check, the generated code has no checks';

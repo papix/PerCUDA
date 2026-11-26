@@ -5,7 +5,7 @@ use PerCUDA;
 my $runner = PerCUDA->new(
     engine   => 'perl',
     argument => [ a => 'f', out => 'i', n => 'i' ],
-    retval   => ['out'],
+    returns  => ['out'],
     source   => <<'K',
 my ($x, $y) = thread_index();
 my $i = 0;

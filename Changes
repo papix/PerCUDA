@@ -26,8 +26,9 @@ Revision history for Perl extension PerCUDA
       my ($ni, $nj) = grid_size(); (any names) instead of the implicit
       $x, $y, $z and $size_x, $size_y, $size_z, and the number of variables
       gives the dimensions of the grid (the dim option is gone)
-    - Incompatible: without retval, run now returns (and updates in place)
-      every array the kernel writes; pass retval => [] for the old behavior
+    - Incompatible: the retval option is now called returns; without it,
+      run now returns (and updates in place) every array the kernel writes;
+      pass returns => [] for the old behavior
     - PerCUDA::configure(...) and use PerCUDA { ... } set the
       options of a package's :GPU subs at run time; PerCUDA::array makes
       device arrays on that configuration; configure, array and runner are

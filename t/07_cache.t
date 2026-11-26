@@ -12,7 +12,7 @@ my %args = (
     engine    => 'gpu',
     cache_dir => "$dir",
     argument  => [ in => 'f', out => 'f' ],
-    retval    => ['out'],
+    returns   => ['out'],
     source    => 'my $x = thread_index(); $out->[$x] = $in->[$x] * 2;',
 );
 
