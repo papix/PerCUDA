@@ -409,7 +409,11 @@ sub _analyze_writes ($self) {
 #   percuda_kernel(<arrays and scalars in declaration order>,
 #                  size_x [, size_y [, size_z]], <inner dims of each array>)
 
-sub kernel_params ($self) {
+#
+# With $check (check => 1), the outermost dimension of each array follows
+# too, and an int *percuda_err buffer comes last.
+
+sub kernel_params ($self, $check = 0) {
     my @params;
     for my $i (0 .. $#{ $self->{args} }) {
         my $arg = $self->{args}[$i];
@@ -423,8 +427,9 @@ sub kernel_params ($self) {
         my $arg = $self->{args}[$i];
         next unless $arg->{kind} eq 'array';
         push @params, { kind => 'dim', arg => $i, axis => $_, type => 'i', name => "d_$arg->{name}_$_" }
-            for 1 .. $arg->{rank} - 1;
+            for ($check ? 0 : 1) .. $arg->{rank} - 1;
     }
+    push @params, { kind => 'error', name => 'percuda_err' } if $check;
     return \@params;
 }
 

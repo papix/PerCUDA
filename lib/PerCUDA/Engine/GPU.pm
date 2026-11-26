@@ -21,7 +21,7 @@ my %BLOCK = (1 => [ 256, 1, 1 ], 2 => [ 32, 8, 1 ], 3 => [ 32, 4, 2 ]);    # CUD
 sub init ($self) {
 
     # context, source, precision, cache_dir
-    $self->{params}   = $self->{analyzer}->kernel_params;
+    $self->{params}   = $self->{analyzer}->kernel_params($self->{check});
     $self->{buffers}  = {};    # argument index => CUDA::DriverAPI::Buffer
     $self->{compiler} = PerCUDA::Compiler->new(
         context   => $self->{context},
@@ -178,9 +178,15 @@ sub run ($self, @values) {
         }
     }
 
+    my $err;
+    if ($self->{check}) {    # flag, array, line, axis, index, x, y, z of the first bad access
+        $err = $self->_buffer('check', 8 * 4);
+        $err->fill(0);
+    }
     my @kernel_args = map {
         my $p = $_;
-              $p->{kind} eq 'array'  ? $buf{ $p->{arg} }
+              $p->{kind} eq 'error'  ? $err
+            : $p->{kind} eq 'array'  ? $buf{ $p->{arg} }
             : $p->{kind} eq 'scalar' ? [ $TYPE{ $p->{type} } => $values[ $p->{arg} ] ]
             : $p->{kind} eq 'size'   ? [ i32                 => $grid->[ $p->{axis} ] ]
             :                          [ i32 => $layout->{arrays}{ $p->{arg} }{dims}[ $p->{axis} ] ];
@@ -193,6 +199,16 @@ sub run ($self, @values) {
     my @blocks = map { int(($cuda[$_] + $block[$_] - 1) / $block[$_]) } 0 .. 2;
     $self->_launch($self->{kernel}, $PerCUDA::CodeGen::CUDA::KERNEL_NAME, \@kernel_args, [ @blocks, @block, 0 ])
         unless grep { $_ == 0 } @blocks;
+
+    # check => 1: report a bad access before anything is copied back
+    if ($err) {
+        my ($bad, $id, $line, $axis, $index, @thread) = @{ $err->read_array(type => 'i32', dims => [8]) };
+        if ($bad) {
+            my $arg = $self->{args}[$id];
+            PerCUDA::Engine::out_of_range($arg->{name}, $line, [ @thread[ 0 .. $dim - 1 ] ],
+                $axis, $index, $layout->{arrays}{$id}{dims}[$axis]);
+        }
+    }
 
     my @results;
     for my $name (@{ $self->{retval} }) {

@@ -36,6 +36,14 @@ Setup, commands, layout and style are in `CONTRIBUTING.md`; read it first.
 - `random()` must stay integer-only (triple32 chain) in both
   `CodeGen::CUDA`'s prelude and `PerCUDA::Runtime`; the perl side computes
   unsigned 32-bit products with `_mul32` to avoid 64-bit overflow.
+- `check => 1` routes every array access through `percuda_at` (CUDA) and
+  `PerCUDA::Runtime::at` (Perl); both report through
+  `PerCUDA::Engine::out_of_range` so the messages match. With check, the
+  kernel ABI also passes dimension 0 of each array and an error buffer
+  (`kernel_params($check)`). Keep check-free code identical to before: it
+  must cost nothing when off.
+- Errors raised inside the engines use `@CARP_NOT` so that they point at the
+  caller of `run`; generated kernel packages declare it too.
 - The GPU code is compiled with `--fmad=false`; fused multiply-add would break
   the exact match.
 - The kernel ABI is defined once, in `PerCUDA::Analyzer::kernel_params`; the

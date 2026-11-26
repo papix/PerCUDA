@@ -10,6 +10,9 @@ use PerCUDA::Engine::GPU;
 
 our $VERSION = "0.01";
 
+# Errors raised inside the engines point at the caller of run, not at PerCUDA.
+our @CARP_NOT = qw(PerCUDA::Engine);
+
 sub new ($class, %args) {
     my $source = $args{source}   // Carp::croak("PerCUDA: 'source' is required");
     my $dim    = $args{dim}      // 1;
@@ -47,8 +50,9 @@ sub new ($class, %args) {
     my $engine = $args{engine};
     Carp::croak("PerCUDA: engine must be 'gpu' or 'perl'") if defined $engine && $engine !~ /\A(?:gpu|perl)\z/;
 
-    my $self   = bless { analyzer => $an, arguments => \@arguments, mode => $mode }, $class;
-    my %common = (analyzer => $an, size => $size, retval => $retval);
+    my $check  = $args{check} ? 1 : 0;
+    my $self   = bless { analyzer => $an, arguments => \@arguments, mode => $mode, check => $check }, $class;
+    my %common = (analyzer => $an, size => $size, retval => $retval, check => $check);
 
     my $context;
     if (!defined $engine || $engine eq 'gpu') {
@@ -93,12 +97,13 @@ sub _cpu_count () {
 }
 
 sub cuda_source ($self) {
-    return $self->{cuda_source} //= PerCUDA::CodeGen::CUDA->new($self->{analyzer}, mode => $self->{mode})->generate;
+    return $self->{cuda_source} //=
+        PerCUDA::CodeGen::CUDA->new($self->{analyzer}, mode => $self->{mode}, check => $self->{check})->generate;
 }
 
 sub perl_source ($self) {
     return $self->{perl_source} //=
-        PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{mode})->generate;
+        PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{mode}, check => $self->{check})->generate;
 }
 
 sub run ($self, @values) {
@@ -226,6 +231,18 @@ one per CPU (default 1). The rows of the grid (C<$x>) are dealt out to
 forked processes, which send back their rows of the C<retval> arrays; results
 are the same as with one process. Only kernels whose stores all use C<$x> as
 the first index are split; others run in one process.
+
+=item C<check>: true to check every array index (default off). An index out
+of range on either engine makes C<run> die with the array, the dimension, the
+index, the valid range, the kernel line and the thread, e.g.
+
+    PerCUDA: index out of range at kernel line 3: $in, dimension 1, index 3 is not in 0 .. 2 (thread $x=0, $y=1)
+
+Indices are truncated toward zero first, as in C. When several accesses are
+out of range, the GPU reports one of them (threads run in parallel) and perl
+the first in its order; the contents of the C<retval> arrays are then
+unspecified. Checking slows kernels down (about 3 times for a stencil on the
+GPU, 4 times on the perl engine) and costs nothing when off.
 
 =item C<cache_dir>: directory of compiled kernels (C<$ENV{PERCUDA_CACHE_DIR}>,
 default C<~/.cache/percuda>). A broken entry is compiled again on the first
@@ -385,9 +402,10 @@ Remaining differences:
 
 =over 4
 
-=item * Out of range or negative array indices are not checked on the GPU,
-while perl reads 0 (or counts negative indices from the end) and grows the
-array on writes.
+=item * Without C<< check => 1 >>, out of range or negative array indices are
+not checked: the GPU reads garbage and may overwrite other data, while perl
+reads 0 (or counts negative indices from the end) and grows the array on
+writes. Use C<check> while developing a kernel.
 
 =item * Perl keeps integral values as integers, so it loses the sign of a
 negative zero (C<0.0 * -1>), and dividing by it gives inf instead of -inf.

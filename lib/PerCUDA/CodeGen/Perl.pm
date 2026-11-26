@@ -19,7 +19,8 @@ my %CMP   = map { $_ => 1 } qw(== != < > <= >=);
 # 32-bit integer wrapping, which cost the most.
 sub new ($class, $analyzer, %opt) {
     my $mode = $opt{mode} // 'compat';
-    return bless { an => $analyzer, exact => $mode ne 'fast', portable => $mode eq 'exact' }, $class;
+    return bless { an => $analyzer, exact => $mode ne 'fast', portable => $mode eq 'exact', check => $opt{check} },
+        $class;
 }
 
 sub generate ($self) {
@@ -180,6 +181,14 @@ sub _expr ($self, $e) {
     return $self->_num($e)      if $t eq 'num';
     return "\$$e->{sym}{cname}" if $t eq 'var';
     if ($t eq 'elem') {
+        if ($self->{check}) {    # a reference to the element, after checking every index
+            my $thread = join ', ', map { "\$percuda_$_" } $an->axes;
+            return
+                  "\${ PerCUDA::Runtime::at(\$v_$e->{name}, '$e->{name}', "
+                . ($e->{line} // 0)
+                . ", [$thread], "
+                . join(', ', map { $self->_expr($_) } @{ $e->{idx} }) . ') }';
+        }
         return "\$v_$e->{name}" . join('', map { '->[' . $self->_expr($_) . ']' } @{ $e->{idx} });
     }
     if ($t eq 'un') {

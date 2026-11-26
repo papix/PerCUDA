@@ -18,8 +18,9 @@ my $SERIAL = 0;
 
 sub init ($self) {
     my $package = 'PerCUDA::Engine::Perl::Kernel' . $SERIAL++;
-    $self->{perl_source} = "package $package;\nuse strict;\nuse warnings;\nno warnings qw(uninitialized numeric);\n"
-        . PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{mode})->generate;
+    $self->{perl_source} =
+        "package $package;\nour \@CARP_NOT = qw(PerCUDA::Engine::Perl PerCUDA::Engine PerCUDA::Runtime);\nuse strict;\nuse warnings;\nno warnings qw(uninitialized numeric);\n"
+        . PerCUDA::CodeGen::Perl->new($self->{analyzer}, mode => $self->{mode}, check => $self->{check})->generate;
     $self->{code} = eval $self->{perl_source};    ## no critic (ProhibitStringyEval)
     Carp::croak("PerCUDA: failed to compile the kernel for the perl engine: $@\n$self->{perl_source}")
         unless $self->{code};
@@ -158,7 +159,23 @@ sub _run_parallel ($self, $call, $layout, $results) {
 
 package PerCUDA::Runtime;
 
+our @CARP_NOT = qw(PerCUDA::Engine);
+
 sub _f32 ($v) { return unpack 'f', pack 'f', $v }
+
+# check => 1: a reference to $array->[$i][$j]..., or an error naming the
+# first index out of range (like the GPU, indices are truncated to int).
+sub at ($array, $name, $line, $thread, @index) {
+    my $node = $array;
+    for my $axis (0 .. $#index) {
+        my $i    = int $index[$axis];
+        my $size = ref $node eq 'ARRAY' ? scalar @$node : 0;
+        PerCUDA::Engine::out_of_range($name, $line, $thread, $axis, $i, $size) if $i < 0 || $i >= $size;
+        return \$node->[$i]                                                    if $axis == $#index;
+        $node = $node->[$i];
+    }
+    return;
+}
 
 my $INF = 9**9**9;
 my $NAN = -sin($INF);

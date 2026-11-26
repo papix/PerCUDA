@@ -5,6 +5,8 @@ use Scalar::Util qw(blessed refaddr);
 use PerCUDA::Array;
 use PerCUDA::Data qw(shape is_ndarray check_ndarray_type);
 
+our @CARP_NOT = qw(PerCUDA PerCUDA::Runtime);
+
 # Base class of the engines. Both engines share the calling convention of
 # run: one value per argument, empty arrays take the shape of the size
 # argument and are zero filled, and only retval arrays change for the caller.
@@ -22,6 +24,16 @@ sub new ($class, %args) {
 }
 
 sub init ($self) { }
+
+# The error of check => 1, the same on both engines.
+sub out_of_range ($name, $line, $thread, $axis, $index, $size) {
+    my @axes  = qw(x y z);
+    my $where = join ', ', map { "\$$axes[$_]=$thread->[$_]" } 0 .. $#$thread;
+    Carp::croak("PerCUDA: index out of range at kernel line $line: \$$name, dimension $axis, index $index"
+            . ' is not in 0 .. '
+            . ($size - 1)
+            . " (thread $where)");
+}
 
 sub is_device_array ($value) { return blessed $value && $value->isa('PerCUDA::Array') }
 

@@ -67,16 +67,50 @@ C
 
 # mode => 'exact' uses PerCUDA::Math instead of CUDA's math functions, so that
 # the perl engine can reproduce the results bit for bit.
+#
+# check => 1 routes every array access through percuda_at, which records
+# the first out-of-range index in percuda_err (read back by the GPU engine)
+# and points the access at a scratch variable instead.
 sub new ($class, $analyzer, %opt) {
-    return bless { an => $analyzer, portable => ($opt{mode} // 'compat') eq 'exact' }, $class;
+    return bless { an => $analyzer, portable => ($opt{mode} // 'compat') eq 'exact', check => $opt{check} ? 1 : 0 },
+        $class;
 }
+
+my $CHECK_PRELUDE = <<'C';
+static __device__ void percuda_fail(int *err, int id, int line, int axis, int index, int x, int y, int z) {
+    if (atomicCAS(err, 0, 1) == 0) {
+        err[1] = id; err[2] = line; err[3] = axis; err[4] = index; err[5] = x; err[6] = y; err[7] = z;
+    }
+}
+template <typename T>
+static __device__ T *percuda_at(T *base, T *scratch, int *err, int id, int line, int x, int y, int z, int rank,
+                                int i0, int i1, int i2, int d0, int d1, int d2) {
+    int idx[3] = { i0, i1, i2 };
+    int dim[3] = { d0, d1, d2 };
+    for (int k = 0; k < rank; k++) {
+        if (idx[k] < 0 || idx[k] >= dim[k]) {
+            percuda_fail(err, id, line, k, idx[k], x, y, z);
+            *scratch = 0;
+            return scratch;
+        }
+    }
+    int flat = i0;
+    if (rank > 1) flat = flat * d1 + i1;
+    if (rank > 2) flat = flat * d2 + i2;
+    return base + flat;
+}
+C
 
 sub generate ($self) {
     my $an   = $self->{an};
     my @axes = $an->axes;
 
     my @params;
-    for my $p (@{ $an->kernel_params }) {
+    for my $p (@{ $an->kernel_params($self->{check}) }) {
+        if ($p->{kind} eq 'error') {
+            push @params, 'int *percuda_err';
+            next;
+        }
         my $ctype = $CTYPE{ $p->{type} };
         if ($p->{kind} eq 'array') {
             my $arg   = $an->args->[ $p->{arg} ];
@@ -97,10 +131,13 @@ sub generate ($self) {
         push @prologue, "int percuda_$axes[$i] = blockIdx.$cuda * blockDim.$cuda + threadIdx.$cuda;";
     }
     push @prologue, 'if (' . join(' || ', map { "percuda_$_ >= percuda_size_$_" } @axes) . ') return;';
+    push @prologue, 'int percuda_scratch_i; float percuda_scratch_f; double percuda_scratch_d;' if $self->{check};
 
     my $body     = join '', map { $self->_stmt($_, 1) } @{ $an->ast->{body} };
     my $prologue = join '', map { "    $_\n" } @prologue;
-    my $prelude  = $self->{portable} ? $PRELUDE . PerCUDA::Math::c_prelude() : $PRELUDE;
+    my $prelude  = $PRELUDE;
+    $prelude .= PerCUDA::Math::c_prelude() if $self->{portable};
+    $prelude .= $CHECK_PRELUDE             if $self->{check};
     return "$prelude\nextern \"C\" __global__ void $KERNEL_NAME(" . join(', ', @params) . ") {\n$prologue$body}\n";
 }
 
@@ -206,6 +243,20 @@ sub _expr ($self, $e) {
 sub _elem ($self, $e) {
     my $name = $e->{name};
     my @idx  = map { $self->_cast('i', $_) } @{ $e->{idx} };
+    if ($self->{check}) {
+        my $an    = $self->{an};
+        my $rank  = @idx;
+        my $type  = $e->{sym}{type};
+        my ($id)  = grep { $an->args->[$_]{name} eq $name } 0 .. $#{ $an->args };
+        my @t     = map  { $_ < $an->dim ? "percuda_$PerCUDA::Analyzer::AXES[$_]" : '0' } 0 .. 2;
+        my @i     = map  { $idx[$_] // '0' } 0 .. 2;
+        my @d     = map  { $_ < $rank ? "d_${name}_$_" : '0' } 0 .. 2;
+        my $ctype = $CTYPE{$type};
+        return
+              "(*percuda_at(($ctype *)v_$name, &percuda_scratch_$type, percuda_err, $id, "
+            . ($e->{line} // 0)
+            . ", @{[ join ', ', @t ]}, $rank, @{[ join ', ', @i ]}, @{[ join ', ', @d ]}))";
+    }
     my $flat = shift @idx;
     my $d    = 1;
     for my $i (@idx) {

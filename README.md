@@ -89,6 +89,18 @@ Framework for Perl" (Fukumoto and Ishiura, IEICE Technical Report, 2014) and
     forked processes, which send back their rows of the `retval` arrays; results
     are the same as with one process. Only kernels whose stores all use `$x` as
     the first index are split; others run in one process.
+    - `check`: true to check every array index (default off). An index out
+    of range on either engine makes `run` die with the array, the dimension, the
+    index, the valid range, the kernel line and the thread, e.g.
+
+            PerCUDA: index out of range at kernel line 3: $in, dimension 1, index 3 is not in 0 .. 2 (thread $x=0, $y=1)
+
+        Indices are truncated toward zero first, as in C. When several accesses are
+        out of range, the GPU reports one of them (threads run in parallel) and perl
+        the first in its order; the contents of the `retval` arrays are then
+        unspecified. Checking slows kernels down (about 3 times for a stencil on the
+        GPU, 4 times on the perl engine) and costs nothing when off.
+
     - `cache_dir`: directory of compiled kernels (`$ENV{PERCUDA_CACHE_DIR}`,
     default `~/.cache/percuda`). A broken entry is compiled again on the first
     run.
@@ -219,9 +231,10 @@ With `mode => 'fast'`, the first two are skipped.
 
 Remaining differences:
 
-- Out of range or negative array indices are not checked on the GPU,
-while perl reads 0 (or counts negative indices from the end) and grows the
-array on writes.
+- Without `check => 1`, out of range or negative array indices are
+not checked: the GPU reads garbage and may overwrite other data, while perl
+reads 0 (or counts negative indices from the end) and grows the array on
+writes. Use `check` while developing a kernel.
 - Perl keeps integral values as integers, so it loses the sign of a
 negative zero (`0.0 * -1`), and dividing by it gives inf instead of -inf.
 
