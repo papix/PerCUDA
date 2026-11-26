@@ -13,10 +13,15 @@ my @modules = qw(
     PerCUDA::Array
     PerCUDA::Engine::Perl
     PerCUDA::Engine::GPU
+    PerCUDA::Context
+    PerCUDA::Kernel
 );
 
+my @warnings;
+local $SIG{__WARN__} = sub { push @warnings, @_ };
 for my $module (@modules) {
     ok lives { eval "require $module; 1" or die $@ }, "load $module" or note $@;
 }
+is \@warnings, [], 'no warnings while loading';
 
 done_testing;

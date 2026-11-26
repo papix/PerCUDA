@@ -13,6 +13,41 @@ Revision history for Perl extension PerCUDA
       the CUDA context, convert arrays in C (CUDA::DriverAPI write_array/read_array)
     - Add check => 1, which reports out-of-range array indices on both
       engines with the array, dimension, index, kernel line and thread
+    - Shorter interface: run(name => value, ...), PerCUDA->context for
+      options and arrays shared by kernels, constant => { NAME => number },
+      size => [ ... ] or an int scalar name for an explicit grid, PerCUDA::runner
+      for the runner of a :GPU sub, and dim inferred from the axes
+      the kernel uses
+    - Add kernel subs: source => \&name or sub (...) { ... } (the signature
+      orders the arguments), and with use PerCUDA ':kernel',
+      sub NAME :GPU(types, options) (signature) { ... } runs as a kernel when
+      called
+    - Incompatible: without retval, run now returns (and updates in place)
+      every array the kernel writes; pass retval => [] for the old behavior
+    - PerCUDA::configure(...) and use PerCUDA ':kernel' => { ... } set the
+      options of a package's :GPU subs at run time; PerCUDA::array makes
+      device arrays on that configuration; configure, array and runner are
+      functions that can be imported (use PerCUDA qw(:kernel configure ...))
+    - Kernel subs are the documented way to write kernels; string kernels
+      remain for perl -e, string eval and generated kernels
+    - Kernel subs need no types: parameters without one default to float
+      (double with precision => 'double'), or int where an integer is needed;
+      $runner->arguments lists them; array(...) without a type is a float
+      (double with precision => 'double', or the type of an ndarray), and
+      new(source => \&gpu_sub) takes the types and options of its attribute
+    - :GPU(types, { options }): the types of every parameter (or none),
+      then a hash of options of new written as for new (evaluated as Perl),
+      including constant => { ... } and size => [ ... ]; kernels take
+      barewords as constants, and kernel subs see use constant of their
+      package
+    - Types are written int, float and double (i, f and d still work);
+      incompatible: PerCUDA::Array->type returns the name
+    - A result ndarray of another type than its argument receives the values
+      converted, instead of making run croak
+    - The engine defaults to $ENV{PERCUDA_ENGINE} when set
+    - Incompatible: without size, the grid is the shape of the first array
+      passed non-empty, preferring arrays the kernel reads (was: the first
+      array argument)
     - Add research samples to eg/ (heat equation, Poisson CG, Gray-Scott,
       N-body, Ising model, Black-Scholes, Monte Carlo option, k-means), each
       checked against a known answer, with eg/README.md

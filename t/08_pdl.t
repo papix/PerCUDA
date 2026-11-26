@@ -52,8 +52,10 @@ for my $engine (ndarray_engines()) {
             'an input ndarray of another type is converted';
         is [ $double_a->dims ], [ 5, 4 ], 'and left unchanged';
 
-        like dies { $r->run($a, $b, zeroes(double, 6, 4), 5) }, qr/ndarray 'c' must be of type float/,
-            'a result ndarray must have the declared type';
+        my $double_c = zeroes(double, 6, 4);
+        $r->run($a, $b, $double_c, 5);
+        is $double_c->unpdl,     $expected, 'a result ndarray of another type receives the values converted';
+        is $double_c->type . '', 'double',  'and keeps its type';
         like dies { $r->run($a->flat, $b, zeroes(float, 6, 4), 5) }, qr/ndarray 'a' must have 2 dimensions/,
             'rank is checked';
     };
@@ -105,6 +107,30 @@ subtest 'size argument as an ndarray' => sub {
         );
         my $grid = ones(long, 3, 2);
         is $r->run($grid, [])->[1], [ 11, 12, 13 ], "$engine: grid shape from ->dims (3, 2)";
+    }
+};
+
+subtest 'an array made from an ndarray keeps its type' => sub {
+    my $pc = PerCUDA->context(engine => 'perl');
+    is $pc->array(sequence(long,   3))->type, 'int',    'long';
+    is $pc->array(sequence(double, 3))->type, 'double', 'double';
+    is $pc->array(sequence(byte,   3))->type, 'int',    'another integer type: int';
+    is $pc->array(sequence(indx,   3))->type, 'int',    'indx';
+};
+
+subtest 'written ndarrays are the default retval' => sub {
+    for my $engine (ndarray_engines()) {
+        my $r = PerCUDA->new(
+            engine   => $engine,
+            argument => [ a => 'f', out => 'f' ],
+            source   => '$out->[$x] = $a->[$x] * 2;',
+        );
+        my $out = zeroes(float, 3);
+        $r->run(a => pdl([ 1, 2, 3 ]), out => $out);
+        is [ $out->list ], [ 2, 4, 6 ], "$engine: filled in place";
+        my $double = pdl([ 1, 2, 3 ]);    # double, as PDL makes it by default
+        $r->run(a => $double, out => $double);
+        is [ $double->list ], [ 2, 4, 6 ], "$engine: a double ndarray is updated in place, converted";
     }
 };
 

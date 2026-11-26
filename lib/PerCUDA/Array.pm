@@ -1,7 +1,7 @@
 package PerCUDA::Array;
 use v5.40;
 use Carp          ();
-use PerCUDA::Data qw(is_ndarray);
+use PerCUDA::Data qw(is_ndarray type_name);
 
 # An array that stays with an engine between runs: in device memory for the
 # gpu engine, as a nested array already converted to its type for the perl
@@ -13,7 +13,7 @@ sub _new ($class, %args) {
     return bless {%args}, $class;    # engine, type, dims, and buffer (gpu) or data (perl)
 }
 
-sub type   ($self) { return $self->{type} }
+sub type   ($self) { return type_name($self->{type}) }
 sub dims   ($self) { return [ @{ $self->{dims} } ] }
 sub engine ($self) { return $self->{engine} }
 
@@ -77,8 +77,8 @@ PerCUDA::Array - Array kept with an engine between runs
 
 =head1 SYNOPSIS
 
-    my $cur  = $runner->array($board, type => 'i');
-    my $next = $runner->array(type => 'i', dims => [ 1024, 1024 ]);
+    my $cur  = $runner->array($board, type => 'int');
+    my $next = $runner->array(type => 'int', dims => [ 1024, 1024 ]);
     for (1 .. 1000) {
         $runner->run($cur, $next);
         ($cur, $next) = ($next, $cur);
@@ -105,7 +105,7 @@ in a fixed order (see L<PerCUDA/array>).
 
 =item C<< $array->type >>, C<< $array->dims >>, C<< $array->engine >>
 
-Its type (C<i>, C<f> or C<d>), dimensions (outermost first) and engine
+Its type (C<int>, C<float> or C<double>), dimensions (outermost first) and engine
 (C<gpu> or C<perl>).
 
 =back

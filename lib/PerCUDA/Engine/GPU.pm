@@ -5,7 +5,7 @@ use Carp         ();
 use Scalar::Util qw(refaddr);
 use PerCUDA::Array;
 use PerCUDA::CodeGen::CUDA;
-use PerCUDA::Data qw(is_ndarray);
+use PerCUDA::Data qw(is_ndarray ndarray_has_type);
 use PerCUDA::Compiler;
 use PerCUDA::Reduce;
 
@@ -21,14 +21,19 @@ my %BLOCK = (1 => [ 256, 1, 1 ], 2 => [ 32, 8, 1 ], 3 => [ 32, 4, 2 ]);    # CUD
 sub init ($self) {
 
     # context, source, precision, cache_dir
-    $self->{params}   = $self->{analyzer}->kernel_params($self->{check});
-    $self->{buffers}  = {};    # argument index => CUDA::DriverAPI::Buffer
+    $self->init_storage;
+    $self->{params} = $self->{analyzer}->kernel_params($self->{check});
+    $self->{kernel} = $self->_program('kernel', $self->{source});
+    return;
+}
+
+sub init_storage ($self) {
+    $self->{buffers} = {};    # argument index => CUDA::DriverAPI::Buffer
     $self->{compiler} = PerCUDA::Compiler->new(
         context   => $self->{context},
         precision => $self->{precision},
         cache_dir => $self->{cache_dir},
     );
-    $self->{kernel} = $self->_program('kernel', $self->{source});
     return;
 }
 
@@ -221,8 +226,20 @@ sub run ($self, @values) {
             next;
         }
 
+        # An ndarray of another type receives the values converted to its
+        # type (through a nested array: slower than an ndarray of the type).
+        my $type = $self->{args}[$i]{type};
+        if ($layout->{arrays}{$i}{ndarray} && !ndarray_has_type($values[$i], $type)) {
+            my $nested = $buf{$i}->read_array(type => $TYPE{$type}, dims => $layout->{arrays}{$i}{dims});
+            my $result = PDL->pdl($values[$i]->type, $nested);
+            $values[$i]->reshape(reverse @{ $layout->{arrays}{$i}{dims} });
+            $values[$i] .= $result;
+            push @results, $values[$i];
+            next;
+        }
+
         # filled in place: a nested array reuses its rows and scalars, an
-        # ndarray (checked to have the matching type) is reshaped
+        # ndarray of the type is reshaped
         _ndarray_guard(
             $layout->{arrays}{$i}{ndarray},
             sub {

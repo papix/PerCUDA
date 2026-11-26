@@ -44,7 +44,7 @@ for my $engine (both_engines()) {
         my $cur  = $r->array($glider, type => 'i');
         my $next = $r->array(type => 'i', dims => [ 6, 8 ]);
         is $cur->dims,   [ 6, 8 ],                       'dims, outermost first';
-        is $cur->type,   'i',                            'type';
+        is $cur->type,   'int',                          'type';
         is $cur->engine, $engine,                        'engine';
         is $next->get,   [ map { [ (0) x 8 ] } 1 .. 6 ], 'dims => [...] makes zeros';
 
@@ -62,15 +62,15 @@ for my $engine (both_engines()) {
         is scalar $r->run($r->array($glider, type => 'i'), []), life('perl')->run($glider, []),
             'a device input with a nested retval';
 
-        like dies { $r->run($r->array($glider, type => 'f'), $next) }, qr/'cur' must be of type i, not f/,
+        like dies { $r->run($r->array($glider, type => 'f'), $next) }, qr/'cur' must be of type int, not float/,
             'type is checked';
         like dies { $r->run($cur, $r->array([ 1, 2 ], type => 'i')) }, qr/'next' must have 2 dimensions/,
             'rank is checked';
         like dies { $r->run($cur, $cur) }, qr/same array is passed for 'cur' and 'next'/,
             'an array written by the kernel cannot be another argument too';
-        like dies { $r->array($glider) },                 qr/needs type/,         'type is required';
+        is $r->array($glider)->type, 'float', 'without a type: float';
         like dies { $r->array(type => 'i', dims => []) }, qr/needs data or dims/, 'dims are checked';
-        like dies { $r->array([], type => 'i') },         qr/non-empty/,          'data must not be empty';
+        like dies { $r->array([], type => 'i') }, qr/non-empty/, 'data must not be empty';
     };
 }
 
