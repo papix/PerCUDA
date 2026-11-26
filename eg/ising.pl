@@ -11,39 +11,41 @@ use v5.40;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Time::HiRes qw(time);
-use PerCUDA;
+use PerCUDA     qw(:kernel configure array runner);
 
 my ($engine, $L, $sweeps, @temperatures) = @ARGV;
 $L      //= 256;
 $sweeps //= 2000;    # half for equilibration, half for measurement
 @temperatures = (1.5, 2.0, 2.269, 2.5, 3.5) unless @temperatures;
 
-my $sweep = PerCUDA->new(
-    engine   => $engine,
-    dim      => 2,
-    argument => [ spin => 'i', parity => 'i', seed => 'i', step => 'i', p4 => 'f', p8 => 'f' ],
-    source   => <<'KERNEL');
-if (($x + $y) % 2 == $parity) {
-    my $s = $spin->[$x][$y];
-    my $neighbours = $spin->[($x + 1) % $size_x][$y] + $spin->[($x + $size_x - 1) % $size_x][$y]
-        + $spin->[$x][($y + 1) % $size_y] + $spin->[$x][($y + $size_y - 1) % $size_y];
-    my $de = 2 * $s * $neighbours;
-    my $p = $de <= 0 ? 1.0 : $de == 4 ? $p4 : $p8;
-    $spin->[$x][$y] = -$s if random($seed, $x, $y, $step) < $p;
+# The spins are an int array (+1 or -1); p4 and p8 are float acceptance probabilities.
+sub metropolis : GPU({ argument => [ spin => 'int', parity => 'int' ] }) ($spin, $parity, $seed, $step, $p4, $p8) {
+    if (($x + $y) % 2 == $parity) {
+        my $s = $spin->[$x][$y];
+        my $neighbours =
+            $spin->[ ($x + 1) % $size_x ][$y] +
+            $spin->[ ($x + $size_x - 1) % $size_x ][$y] +
+            $spin->[$x][ ($y + 1) % $size_y ] +
+            $spin->[$x][ ($y + $size_y - 1) % $size_y ];
+        my $de = 2 * $s * $neighbours;
+        my $p  = $de <= 0 ? 1.0 : $de == 4 ? $p4 : $p8;
+        $spin->[$x][$y] = -$s if random($seed, $x, $y, $step) < $p;
+    }
 }
-KERNEL
+
+configure(engine => $engine);
 
 my $start = time;
 my $ok    = 1;
-printf "engine: %s\n%d x %d lattice, %d sweeps per temperature\n", $sweep->engine, $L, $L, $sweeps;
+printf "engine: %s\n%d x %d lattice, %d sweeps per temperature\n", runner(\&metropolis)->engine, $L, $L, $sweeps;
 printf "%6s %10s %10s\n", 'T', '<|m|>', 'Onsager';
 for my $i (0 .. $#temperatures) {
     my $t    = $temperatures[$i];
-    my $spin = $sweep->array([ map { [ (1) x $L ] } 1 .. $L ], type => 'i');    # ordered start
+    my $spin = array([ map { [ (1) x $L ] } 1 .. $L ], type => 'int');    # ordered start
     my ($p4, $p8)     = (exp(-4 / $t), exp(-8 / $t));
     my ($sum, $count) = (0, 0);
     for my $s (1 .. $sweeps) {
-        $sweep->run($spin, $_, $i + 1, $s, $p4, $p8) for 0, 1;
+        metropolis($spin, $_, $i + 1, $s, $p4, $p8) for 0, 1;
         next if $s <= $sweeps / 2;
         $sum += abs($spin->sum) / ($L * $L);
         $count++;

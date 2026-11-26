@@ -13,7 +13,7 @@ use v5.40;
 use FindBin;
 use lib "$FindBin::Bin/../lib";
 use Time::HiRes qw(time);
-use PerCUDA;
+use PerCUDA     qw(:kernel configure array runner);
 
 my ($engine, $n, $steps, $image, $feed, $kill) = @ARGV;
 $n     //= 256;
@@ -22,43 +22,45 @@ $feed  //= 0.055;
 $kill  //= 0.062;
 my ($du, $dv, $dt) = (1.0, 0.5, 1.0);
 
-my %common = (engine => $engine, dim => 2);
-my $init   = PerCUDA->new(%common, argument => [ u => 'f', v => 'f', seed => 'i' ], source => <<'KERNEL');
-my $inside = abs($x - $size_x / 2) < $size_x / 10 && abs($y - $size_y / 2) < $size_y / 10;
-$u->[$x][$y] = $inside ? 0.5 : 1.0;
-$v->[$x][$y] = $inside ? 0.25 + 0.1 * random($seed, $x, $y) : 0.0;
-KERNEL
-my $step = PerCUDA->new(
-    %common,
-    size     => 'u',
-    argument => [ u => 'f', v => 'f', u2 => 'f', v2 => 'f', du => 'f', dv => 'f', feed => 'f', kill => 'f', dt => 'f' ],
-    source   => <<'KERNEL');
-my $xm = ($x + $size_x - 1) % $size_x;
-my $xp = ($x + 1) % $size_x;
-my $ym = ($y + $size_y - 1) % $size_y;
-my $yp = ($y + 1) % $size_y;
-my $a = $u->[$x][$y];
-my $b = $v->[$x][$y];
-my $la = -$a + 0.2 * ($u->[$xm][$y] + $u->[$xp][$y] + $u->[$x][$ym] + $u->[$x][$yp])
-    + 0.05 * ($u->[$xm][$ym] + $u->[$xm][$yp] + $u->[$xp][$ym] + $u->[$xp][$yp]);
-my $lb = -$b + 0.2 * ($v->[$xm][$y] + $v->[$xp][$y] + $v->[$x][$ym] + $v->[$x][$yp])
-    + 0.05 * ($v->[$xm][$ym] + $v->[$xm][$yp] + $v->[$xp][$ym] + $v->[$xp][$yp]);
-my $abb = $a * $b * $b;
-$u2->[$x][$y] = $a + $dt * ($du * $la - $abb + $feed * (1.0 - $a));
-$v2->[$x][$y] = $b + $dt * ($dv * $lb + $abb - ($feed + $kill) * $b);
-KERNEL
+sub init : GPU ($u, $v, $seed) {
+    my $inside = abs($x - $size_x / 2) < $size_x / 10 && abs($y - $size_y / 2) < $size_y / 10;
+    $u->[$x][$y] = $inside ? 0.5                                : 1.0;
+    $v->[$x][$y] = $inside ? 0.25 + 0.1 * random($seed, $x, $y) : 0.0;
+}
+
+sub step : GPU ($u, $v, $u2, $v2, $du, $dv, $feed, $kill, $dt) {
+    my $xm = ($x + $size_x - 1) % $size_x;
+    my $xp = ($x + 1) % $size_x;
+    my $ym = ($y + $size_y - 1) % $size_y;
+    my $yp = ($y + 1) % $size_y;
+    my $a  = $u->[$x][$y];
+    my $b  = $v->[$x][$y];
+    my $la =
+        -$a +
+        0.2 * ($u->[$xm][$y] + $u->[$xp][$y] + $u->[$x][$ym] + $u->[$x][$yp]) +
+        0.05 * ($u->[$xm][$ym] + $u->[$xm][$yp] + $u->[$xp][$ym] + $u->[$xp][$yp]);
+    my $lb =
+        -$b +
+        0.2 * ($v->[$xm][$y] + $v->[$xp][$y] + $v->[$x][$ym] + $v->[$x][$yp]) +
+        0.05 * ($v->[$xm][$ym] + $v->[$xm][$yp] + $v->[$xp][$ym] + $v->[$xp][$yp]);
+    my $abb = $a * $b * $b;
+    $u2->[$x][$y] = $a + $dt * ($du * $la - $abb + $feed * (1.0 - $a));
+    $v2->[$x][$y] = $b + $dt * ($dv * $lb + $abb - ($feed + $kill) * $b);
+}
+
+configure(engine => $engine);
 
 my $start = time;
-my ($u, $v, $u2, $v2) = map { $step->array(type => 'f', dims => [ $n, $n ]) } 1 .. 4;
-$init->run($u, $v, 1);
+my ($u, $v, $u2, $v2) = map { array(dims => [ $n, $n ]) } 1 .. 4;
+init($u, $v, 1);
 for (1 .. $steps) {
-    $step->run($u, $v, $u2, $v2, $du, $dv, $feed, $kill, $dt);
+    step($u, $v, $u2, $v2, $du, $dv, $feed, $kill, $dt);
     ($u, $u2, $v, $v2) = ($u2, $u, $v2, $v);
 }
 my ($min, $max, $mean) = ($v->min, $v->max, $v->sum / ($n * $n));
 my $elapsed = time - $start;
 
-printf "engine: %s\n%d x %d grid, %d steps, F = %g, k = %g\n", $step->engine, $n, $n, $steps, $feed, $kill;
+printf "engine: %s\n%d x %d grid, %d steps, F = %g, k = %g\n", runner(\&step)->engine, $n, $n, $steps, $feed, $kill;
 printf "v: min %.4f, max %.4f, mean %.4f\n", $min, $max, $mean;
 printf "time: %.3f s\n",                     $elapsed;
 if (defined $image) {
